@@ -1,0 +1,97 @@
+"""Token 统计路由 — GET /token/records, /statistics, /by-model, /by-date, /quota"""
+
+from datetime import datetime
+
+from fastapi import APIRouter, Query
+from loguru import logger
+
+from src.core.schema import R
+from src.token.statistics import statistics_service
+
+router = APIRouter(prefix="/token", tags=["Token统计"])
+
+
+@router.get("/records")
+async def get_records(
+    user_id: str = Query(default="test"),
+    start_time: str | None = Query(default=None),
+    end_time: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+):
+    """Token 使用记录（分页）"""
+    start = datetime.fromisoformat(start_time) if start_time else None
+    end = datetime.fromisoformat(end_time) if end_time else None
+    result = await statistics_service.query_records(user_id, start, end, page, size)
+    records = [
+        {
+            "id": r.id,
+            "traceId": r.trace_id,
+            "modelName": r.model_name,
+            "inputTokens": r.input_tokens,
+            "outputTokens": r.output_tokens,
+            "totalTokens": r.total_tokens,
+            "costAmount": float(r.cost_amount),
+            "intentType": r.intent_type,
+            "toolCalled": r.tool_called,
+            "createTime": str(r.created_at) if r.created_at else None,
+        }
+        for r in result["records"]
+    ]
+    return R.ok({"records": records, "total": result["total"], "page": result["page"], "size": result["size"]})
+
+
+@router.get("/statistics")
+async def get_statistics(
+    user_id: str = Query(default="test"),
+    start_time: str | None = Query(default=None),
+    end_time: str | None = Query(default=None),
+):
+    """汇总统计"""
+    start = datetime.fromisoformat(start_time) if start_time else None
+    end = datetime.fromisoformat(end_time) if end_time else None
+    result = await statistics_service.get_statistics(user_id, start, end)
+    return R.ok({
+        "totalTokens": result["total_tokens"],
+        "totalInputTokens": result["total_input_tokens"],
+        "totalOutputTokens": result["total_output_tokens"],
+        "totalCost": result["total_cost"],
+        "requestCount": result["request_count"],
+        "toolCallCount": result["tool_call_count"],
+        "avgTokensPerRequest": result["avg_tokens_per_request"],
+    })
+
+
+@router.get("/by-model")
+async def get_by_model(
+    user_id: str = Query(default="test"),
+    start_time: str | None = Query(default=None),
+    end_time: str | None = Query(default=None),
+):
+    """按模型分组统计"""
+    start = datetime.fromisoformat(start_time) if start_time else None
+    end = datetime.fromisoformat(end_time) if end_time else None
+    result = await statistics_service.get_by_model(user_id, start, end)
+    return R.ok(result)
+
+
+@router.get("/by-date")
+async def get_by_date(
+    user_id: str = Query(default="test"),
+    start_time: str | None = Query(default=None),
+    end_time: str | None = Query(default=None),
+):
+    """按日期分组统计"""
+    start = datetime.fromisoformat(start_time) if start_time else None
+    end = datetime.fromisoformat(end_time) if end_time else None
+    result = await statistics_service.get_by_date(user_id, start, end)
+    return R.ok(result)
+
+
+@router.get("/quota")
+async def get_quota(user_id: str = Query(default="test")):
+    """今日用量摘要"""
+    result = await statistics_service.get_today_usage(user_id)
+    result["daily_limit"] = 500_000
+    result["cost_limit"] = 10.0
+    return R.ok(result)

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能助手</title>
+    <!-- Element Plus CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Element Plus JS -->
+    <script src="https://unpkg.com/element-plus"></script>
+    <!-- Axios -->
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <!-- Pinia -->
+    <script src="https://unpkg.com/pinia"></script>
+    <!-- Vue Router -->
+    <script src="https://unpkg.com/vue-router@4"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
+            background-color: #f0f2f5;
+        }
+        #app {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background-color: #409eff;
+            color: white;
+            padding: 0 20px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 4px rgba(0,0,0,.1);
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        .sidebar {
+            width: 200px;
+            background-color: white;
+            border-right: 1px solid #e4e7ed;
+            padding: 20px 0;
+        }
+        .content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .chat-container {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: white;
+            border-radius: 8px;
+            border: 1px solid #e4e7ed;
+        }
+        .chat-input-area {
+            display: flex;
+            gap: 10px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 8px;
+            max-width: 80%;
+        }
+        .user-message {
+            background-color: #409eff;
+            color: white;
+            margin-left: auto;
+        }
+        .ai-message {
+            background-color: #f2f6fc;
+            color: #303133;
+            margin-right: auto;
+        }
+        .file-list {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .upload-area {
+            border: 2px dashed #dcdfe6;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+        }
+        .upload-area:hover {
+            border-color: #409eff;
+        }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>

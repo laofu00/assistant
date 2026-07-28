@@ -1,0 +1,26 @@
+{
+  "name": "smart-assistant-frontend",
+  "version": "1.0.0",
+  "description": "智能助手前端",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "serve": "vite preview --port 3000"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.1.0",
+    "axios": "^1.5.0",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.3.0",
+    "highlight.js": "^11.11.1",
+    "marked": "^18.0.5",
+    "pinia": "^2.1.0",
+    "vue": "^3.3.0",
+    "vue-router": "^4.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.3.0",
+    "vite": "^4.4.0"
+  }
+}

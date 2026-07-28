@@ -1,0 +1,210 @@
+services:
+  # ==================== 反向代理（统一入口） ====================
+  nginx:
+    image: nginx:alpine
+    container_name: smart-nginx
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_SSL_PORT:-443}:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - app
+    restart: unless-stopped
+    networks:
+      - smart-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ==================== 前端（Vue 3 SPA） ====================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
+    container_name: smart-frontend
+    restart: unless-stopped
+    networks:
+      - smart-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ==================== 后端（FastAPI） ====================
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smart-app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-smart123}
+      - CHROMA_URL=${CHROMA_URL:-}
+      - CHROMA_PERSIST_DIR=data/chroma_db
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MODEL_NAME=${MODEL_NAME:-qwen-plus}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-v3}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - JWT_SECRET=${JWT_SECRET:-smart-assistant-jwt-secret}
+      - SMTP_HOST=${SMTP_HOST:-smtp.163.com}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_SSL=${SMTP_SSL:-true}
+    env_file:
+      - ./backend/.env
+    volumes:
+      - app_logs:/app/logs
+      - chroma_data:/app/data/chroma_db
+      - app_uploads:/app/data/uploads
+      - dead_letter_data:/app/data/dead_letter
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - smart-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: ${APP_MEMORY_LIMIT:-1G}
+        reservations:
+          memory: 512M
+
+  # ==================== 数据库（PostgreSQL） ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: smart-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-assistant}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - smart-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-assistant}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${PG_MEMORY_LIMIT:-512M}
+
+  # ==================== 缓存（Redis） ====================
+  redis:
+    image: redis:7-alpine
+    container_name: smart-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-smart123}
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - smart-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "$${REDIS_PASSWORD:-smart123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEMORY_LIMIT:-256M}
+
+  # ==================== 向量数据库（ChromaDB） ====================
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: smart-chromadb
+    ports:
+      - "${CHROMA_PORT:-8001}:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+      - CHROMA_SERVER_AUTHN_CREDENTIALS=${CHROMA_AUTH:-}
+      - CHROMA_SERVER_AUTHN_PROVIDER=${CHROMA_AUTH_PROVIDER:-}
+    restart: unless-stopped
+    networks:
+      - smart-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${CHROMA_MEMORY_LIMIT:-512M}
+
+  # ==================== 数据库迁移（一次性） ====================
+  alembic:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smart-alembic
+    command: alembic upgrade head
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - smart-net
+    profiles:
+      - init
+
+  # ==================== 种子数据（一次性） ====================
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smart-seed
+    command: python scripts/seed_data.py
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}
+    depends_on:
+      alembic:
+        condition: service_completed_successfully
+    networks:
+      - smart-net
+    profiles:
+      - init
+
+volumes:
+  app_logs:
+  chroma_data:
+  app_uploads:
+  dead_letter_data:
+  postgres_data:
+  redis_data:
+
+networks:
+  smart-net:
+    driver: bridge

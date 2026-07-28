@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 环境变量（含密钥）
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 日志
+logs/
+
+# 运行时数据
+**/data/chroma_db/
+**/data/postgres/
+**/data/uploads/*
+**/data/dead_letter/
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 前端构建
+frontend/dist/
+frontend/node_modules/
+
+# Claude 本地配置
+.claude/
+
+# 前端测试/临时文件
+frontend/.env.test
+frontend/test.html
+frontend/运行指南.txt
+
+# Docker env
+.env.docker
+
+# 系统
+.DS_Store
+Thumbs.db

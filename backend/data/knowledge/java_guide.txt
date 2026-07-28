@@ -1,0 +1,95 @@
+# Java 开发指南
+
+## Java 语言基础
+
+Java 是一种面向对象的编程语言，具有"一次编写，到处运行"的跨平台特性。Java 21 是目前最新的 LTS 版本，引入了虚拟线程（Virtual Threads）、记录模式（Record Patterns）、模式匹配（Pattern Matching）等重要特性。
+
+## Java 核心技术栈
+
+### Spring 生态
+Spring 是 Java 开发的事实标准框架：
+- **Spring Boot 3.x**：快速构建独立应用，支持 GraalVM 原生编译
+- **Spring Cloud**：微服务治理，包括服务发现（Nacos/Eureka）、配置中心、网关（Gateway）
+- **Spring Security**：认证与授权框架
+- **Spring AI**：Spring 官方 AI 框架，支持 OpenAI、Azure、Ollama 等模型
+
+### Spring AI 核心概念
+- **ChatClient**：统一的 LLM 调用接口，支持流式和同步调用
+- **Advisor**：类似于拦截器的概念，可在 LLM 调用前后执行逻辑
+- **VectorStore**：向量存储抽象，支持 Redis、Chroma、Pinecone 等多种实现
+- **Tool Calling**：通过 @Tool 注解将 Java 方法暴露给 LLM 调用
+- **ChatMemory**：对话记忆管理接口
+
+### Alibaba Cloud AI 框架
+- **ReactAgent**：基于 ReAct 模式的自主决策 Agent
+- **CompileConfig**：编译时配置，如 recursionLimit
+- **RunnableConfig**：运行时配置，如 threadId 用于多轮对话
+
+## 微服务架构
+
+在微服务架构中，各服务通过 Feign 进行声明式 HTTP 调用：
+- **Feign Client**：接口 + 注解，自动生成 HTTP 请求
+- **Sentinel**：流量控制、熔断降级
+- **Nacos**：服务注册发现 + 动态配置
+
+### 服务间通信
+- **同步调用**：Feign + HTTP
+- **异步消息**：RabbitMQ
+- **Token 统计**：RabbitMQ 异步消费（smart-chat 生产 → smart-token 消费）
+
+## 数据持久化
+
+### ORM 框架
+- **MyBatis Plus**：增强版 MyBatis，简化 CRUD
+- **JPA / Hibernate**：JSR 标准 ORM
+
+### 数据库
+- **MySQL 8.0**：关系型数据存储
+- **Redis Stack**：缓存 + 向量存储 + 全文搜索
+
+## Java 21 新特性
+
+### 虚拟线程（Virtual Threads）
+```java
+try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+    executor.submit(() -> {
+        // 轻量级线程，无需池化管理
+    });
+}
+```
+
+### Record 类型
+```java
+public record User(String name, String email) {}
+```
+
+### 模式匹配
+```java
+if (obj instanceof String s && s.length() > 5) {
+    System.out.println(s.toUpperCase());
+}
+```
+
+## 构建与部署
+
+- **Maven**：依赖管理和构建工具
+- **Docker**：容器化部署
+- **Docker Compose**：多服务编排
+- **Nginx**：反向代理和静态资源服务
+
+## 项目结构最佳实践
+
+```
+smart-assistant/
+├── smart-parent/      # 父 POM，统一依赖管理
+├── smart-common/      # 公共模块（实体、DTO、工具类）
+├── smart-gateway/     # API 网关
+├── smart-auth/        # 认证服务
+├── smart-user/        # 用户服务
+├── smart-chat/        # 对话服务（核心）
+├── smart-knowledge/   # 知识库服务
+├── smart-memo/        # 备忘录服务
+├── smart-token/       # Token 统计服务
+├── smart-monitor/     # 监控服务
+└── frontend/          # Vue 3 前端
+```
