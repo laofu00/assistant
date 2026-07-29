@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.cache import tool_cache
 from src.core.database import async_session_factory
-from src.models.memo import Memo, classify_memo
+from src.models.memo import Memo, async_classify_memo
 
 
 def _clear_memo_cache(user_id: str) -> None:
@@ -80,7 +80,7 @@ async def add_memo(title: str, content: str, due_date: str | None, user_id: str)
         return "备忘录内容不能为空"
 
     content = _normalize_date_terms(content)
-    category = classify_memo(title, content)
+    category = await async_classify_memo(title, content)
     parsed_date = _parse_date(due_date)
 
     async with async_session_factory() as session:
@@ -209,7 +209,7 @@ async def update_memo(memo_id: int, title: str | None, content: str | None, due_
             memo.title = title.strip()
         if content and content.strip():
             memo.content = _normalize_date_terms(content)
-            memo.category = classify_memo(memo.title, memo.content)
+            memo.category = await async_classify_memo(memo.title, memo.content)
         if due_date:
             parsed = _parse_date(due_date)
             if parsed:

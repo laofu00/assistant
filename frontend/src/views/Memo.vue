@@ -3,13 +3,23 @@
     <div class="page-header">
       <h2>备忘录</h2>
       <div class="header-actions">
-        <el-input
+        <el-select
           v-model="searchCategory"
           placeholder="按分类筛选"
           style="width: 200px; margin-right: 10px;"
           clearable
-          @keyup.enter="fetchMemos"
-        />
+          filterable
+          allow-create
+          default-first-option
+          @change="fetchMemos"
+        >
+          <el-option
+            v-for="cat in categoryOptions"
+            :key="cat"
+            :label="cat"
+            :value="cat"
+          />
+        </el-select>
         <el-button type="default" @click="fetchMemos" style="margin-right: 10px;">
           搜索
         </el-button>
@@ -38,9 +48,30 @@
           />
         </el-form-item>
         <el-form-item label="分类">
-          <el-input
+          <el-select
             v-model="editingMemo.category"
-            placeholder="AI自动分类，也可手动输入"
+            placeholder="留空则由AI自动分类"
+            style="width: 100%"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+          >
+            <el-option
+              v-for="cat in categoryOptions"
+              :key="cat"
+              :label="cat"
+              :value="cat"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="到期日期">
+          <el-date-picker
+            v-model="editingMemo.due_date"
+            type="date"
+            placeholder="选择到期日期（可选）"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
           />
         </el-form-item>
       </el-form>
@@ -63,8 +94,13 @@
             <div class="content-preview">{{ scope.row.content }}</div>
           </template>
         </el-table-column>
-        <el-table-column prop="category" label="分类" width="200" />
-        <el-table-column prop="createTime" label="创建时间">
+        <el-table-column prop="category" label="分类" width="120" />
+        <el-table-column prop="due_date" label="到期日期" width="120">
+          <template #default="scope">
+            {{ scope.row.due_date || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="createTime" label="创建时间" width="170">
           <template #default="scope">
             {{ formatDateTime(scope.row.createTime) }}
           </template>
@@ -119,11 +155,15 @@ const total = ref(0)
 const searchCategory = ref('')
 const showEditDialog = ref(false)
 
+// 预设分类选项（用户可输入自定义分类）
+const categoryOptions = ['工作', '生活', '待办', '学习', '重要']
+
 const editingMemo = reactive({
   id: null,
   title: '',
   content: '',
-  category: ''
+  category: '',
+  due_date: null
 })
 
 const fetchMemos = async () => {
@@ -153,6 +193,7 @@ const createNewMemo = () => {
   editingMemo.title = ''
   editingMemo.content = ''
   editingMemo.category = ''
+  editingMemo.due_date = null
   showEditDialog.value = true
 }
 

@@ -8,7 +8,7 @@ from sqlalchemy import and_, select, func
 
 from src.core.database import async_session_factory
 from src.core.schema import R
-from src.models.memo import Memo, classify_memo
+from src.models.memo import Memo, async_classify_memo
 
 router = APIRouter(prefix="/memo", tags=["备忘录"])
 
@@ -29,6 +29,7 @@ class MemoCreate(BaseModel):
     title: str
     content: str
     due_date: str | None = None
+    category: str | None = None  # 用户手动指定分类，不传则 AI 自动分类
 
 
 class MemoUpdate(BaseModel):
@@ -36,6 +37,7 @@ class MemoUpdate(BaseModel):
     content: str | None = None
     due_date: str | None = None
     status: int | None = None
+    category: str | None = None  # 用户手动指定分类，不传则仅在内容变化时 AI 重新分类
 
 
 @router.post("")
@@ -46,7 +48,8 @@ async def create_memo(body: MemoCreate, request: Request):
     user_id = _get_user_id(request)
 
     content = _normalize_date_terms(body.content) if body.content else ""
-    category = classify_memo(body.title, content)
+    # 用户手动指定分类优先，否则 AI 自动分类
+    category = body.category.strip() if body.category and body.category.strip() else await async_classify_memo(body.title, content)
     parsed_date = _parse_date(body.due_date) if body.due_date else None
 
     async with async_session_factory() as session:
@@ -82,9 +85,13 @@ async def update_memo(memo_id: int, body: MemoUpdate):
             memo.due_date = _parse_date(body.due_date)
         if body.status is not None:
             memo.status = body.status
+        if body.category is not None and body.category.strip():
+            memo.category = body.category.strip()
 
-        if body.title is not None or body.content is not None:
-            memo.category = classify_memo(memo.title, memo.content or "")
+        # 用户未手动指定分类，且标题或内容有变化时，AI 重新分类
+        has_category = body.category is not None and body.category.strip()
+        if not has_category and (body.title is not None or body.content is not None):
+            memo.category = await async_classify_memo(memo.title, memo.content or "")
 
         await session.commit()
         return R.ok(None, "更新成功")
