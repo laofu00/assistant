@@ -1,11 +1,12 @@
 """工具管理路由 — GET /tools, GET /tools/{name}, PUT /tools/{name}/enable, PUT /tools/{name}/disable"""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 
+from src.core.auth_deps import get_current_user_id, require_admin
 from src.core.schema import R
 from src.tools.tool_registry import tool_registry
 
-router = APIRouter(prefix="/tools", tags=["工具管理"])
+router = APIRouter(prefix="/tools", tags=["工具管理"], dependencies=[Depends(get_current_user_id)])
 
 
 @router.get("")
@@ -40,7 +41,7 @@ async def get_tool(name: str):
     })
 
 
-@router.put("/{name}/enable")
+@router.put("/{name}/enable", dependencies=[Depends(require_admin)])
 async def enable_tool(name: str):
     """启用工具"""
     if tool_registry.enable(name):
@@ -48,7 +49,7 @@ async def enable_tool(name: str):
     raise HTTPException(404, f"工具 [{name}] 不存在")
 
 
-@router.put("/{name}/disable")
+@router.put("/{name}/disable", dependencies=[Depends(require_admin)])
 async def disable_tool(name: str):
     """禁用工具"""
     if tool_registry.disable(name):

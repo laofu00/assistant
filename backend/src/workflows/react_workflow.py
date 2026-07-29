@@ -4,19 +4,16 @@
 rate_limit → quota_check → load_memory → agent → tools/capture_token → save_memory → __end__
 """
 
-import asyncio
 import uuid
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode
 from loguru import logger
 
 from src.agents.react_agent import create_agent_node
-from src.core.config import settings
-from src.core.memory import sanitize_output, smart_memory
+from src.core.memory import smart_memory
 from src.models.state import AgentState
 from src.tools import date_tool, email_tool, knowledge_tool, memo_tool, user_tool
 from src.tools.tool_registry import ToolPermission, tool_registry
@@ -102,18 +99,14 @@ async def _load_memory_node(state: AgentState) -> dict:
     current_message = last_user.content if isinstance(last_user.content, str) else ""
 
     # 拼接历史 + 用户ID提示
-    formatted = smart_memory.get_formatted_history(session_id, current_message)
+    formatted = await smart_memory.get_formatted_history(session_id, current_message)
     formatted += f"\n\n[系统信息] 当前用户ID: {state.get('user_id', '')}"
     formatted += "\n注意：所有需要 userId 参数的工具调用都必须使用上述用户ID。"
 
-    # 替换最后一条消息
-    new_messages = list(messages)
-    for i in range(len(new_messages) - 1, -1, -1):
-        if isinstance(new_messages[i], HumanMessage):
-            new_messages[i] = HumanMessage(content=formatted)
-            break
-
-    return {"messages": new_messages}
+    # 替换最后一条用户消息：返回新消息替换旧的
+    # add_messages reducer 通过 ID 去重，需用相同 ID
+    replacement = HumanMessage(content=formatted, id=last_user.id)
+    return {"messages": [replacement]}
 
 
 async def _tools_node(state: AgentState) -> dict:
@@ -158,7 +151,9 @@ async def _tools_node(state: AgentState) -> dict:
                     trace_id=trace_id,
                 )
             else:
-                fallback = lambda **kw: f"工具 [{tool_name}] 未注册"  # noqa: E731
+                def _fallback(tool: str = tool_name, **kw: object) -> str:  # noqa: B023
+                    return f"工具 [{tool}] 未注册"
+                fallback = _fallback
                 result = await tool_executor._invoke(fallback, tool_args)
 
             chain_entries.append({
@@ -168,12 +163,17 @@ async def _tools_node(state: AgentState) -> dict:
             })
             tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_id, name=tool_name))
 
-            # preview_email 调用后：强制 LLM 把预览内容输出给用户
+            # preview_email 调用后：强制 LLM 把预览内容完整展示给用户
             if tool_name == "preview_email":
                 tool_messages.append(SystemMessage(
                     content=(
-                        "[系统指令] 你刚才调用了邮件预览工具。现在你必须把上面 ToolMessage 中的邮件预览内容**完整展示给用户**——包括收件人、主题和正文。"
-                        "不要总结、不要省略、不要只说'请确认'。展示完后明确说'请回复确认发送或取消'。"
+                        "[系统指令 - 最高优先级] 你刚才调用了邮件预览工具 preview_email。"
+                        "现在你必须立即执行以下步骤，不可跳过：\n"
+                        "1. 查看上面 ToolMessage 中返回的邮件预览内容\n"
+                        "2. 将预览内容**逐字逐句完整展示**给用户，包括收件人、主题、正文的每一个字\n"
+                        "3. 绝对禁止总结、省略、概括——必须展示完整原文\n"
+                        "4. 绝对禁止只说'请确认发送'而不展示内容\n"
+                        "5. 展示完预览后，最后询问：'请回复确认发送或取消'"
                     )
                 ))
 

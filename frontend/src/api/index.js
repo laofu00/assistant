@@ -134,20 +134,25 @@ export const chatApi = {
   },
 
   // 流式发送消息（Python 版：POST + SSE）
-  async sendMessageStream(message, onChunk, onComplete, onError) {
+  async sendMessageStream(message, onChunk, onComplete, onError, onThinking, onUndo) {
     try {
       const userId = localStorage.getItem('userId') || 'test'
+      const token = localStorage.getItem('token') || ''
       const url = `${api.defaults.baseURL}/chat`
 
       console.log('sendMessageStream - POST', url)
 
+      const headers = {
+        'Accept': 'text/event-stream',
+        'Content-Type': 'application/json',
+      }
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Accept': 'text/event-stream',
-          'Content-Type': 'application/json',
-          'X-User-ID': userId
-        },
+        headers,
         body: JSON.stringify({ message, user_id: userId })
       })
 
@@ -169,6 +174,7 @@ export const chatApi = {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
+      let currentEventType = 'message'
       let currentEventData = ''  // 累积同一个 SSE 事件的多行 data
       let lastDataTime = Date.now()
       const timeoutMs = 120000
@@ -181,23 +187,36 @@ export const chatApi = {
         }
       }, 5000)
 
+      const flushEvent = () => {
+        if (!currentEventData || currentEventData === '[DONE]') return
+        if (currentEventType === 'thinking' && onThinking) {
+          try { onThinking(JSON.parse(currentEventData)) } catch { onThinking({ raw: currentEventData }) }
+        } else if (currentEventType === 'undo' && onUndo) {
+          onUndo(parseInt(currentEventData, 10) || 0)
+        } else {
+          onChunk(currentEventData)
+        }
+      }
+
       try {
         while (true) {
           const { done, value } = await reader.read()
           if (done) {
-            // 处理剩余缓冲区
             if (buffer.trim()) {
+              currentEventType = 'message'
               currentEventData = ''
               for (const line of buffer.split('\n')) {
-                if (line.startsWith('data:')) {
-                  const data = line.substring(5).trim()
-                  currentEventData += (currentEventData ? '\n' : '') + data
+                if (line.startsWith('event:')) {
+                  currentEventType = line.substring(6).trim()
+                } else if (line.startsWith('data:')) {
+                  currentEventData += (currentEventData ? '\n' : '') + line.substring(5).trim()
                 } else if (line.trim() === '') {
-                  if (currentEventData && currentEventData !== '[DONE]') onChunk(currentEventData)
+                  flushEvent()
+                  currentEventType = 'message'
                   currentEventData = ''
                 }
               }
-              if (currentEventData && currentEventData !== '[DONE]') onChunk(currentEventData)
+              flushEvent()
             }
             if (onComplete) onComplete()
             break
@@ -205,24 +224,22 @@ export const chatApi = {
           lastDataTime = Date.now()
           buffer += decoder.decode(value, { stream: true })
 
-          // 解析SSE事件
           const lines = buffer.split('\n')
           buffer = ''
           for (const line of lines) {
-            if (line.startsWith('data:')) {
-              const data = line.substring(5).trim()
-              // 同一个事件的多行 data 用 \n 拼接，保留换行格式
-              currentEventData += (currentEventData ? '\n' : '') + data
-            } else if (line.startsWith('event:') && line.includes('done')) {
-              if (onComplete) onComplete()
-              return
-            } else if (line.trim() === '') {
-              // 空行 = SSE 事件分隔符，提交当前累积的数据
-              if (currentEventData) {
-                if (currentEventData === '[DONE]') continue
-                onChunk(currentEventData)
-                currentEventData = ''
+            if (line.startsWith('event:')) {
+              const eventType = line.substring(6).trim()
+              if (eventType === 'done') {
+                if (onComplete) onComplete()
+                return
               }
+              currentEventType = eventType
+            } else if (line.startsWith('data:')) {
+              currentEventData += (currentEventData ? '\n' : '') + line.substring(5).trim()
+            } else if (line.trim() === '') {
+              flushEvent()
+              currentEventType = 'message'
+              currentEventData = ''
             } else {
               buffer += line + '\n'
             }

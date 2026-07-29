@@ -51,7 +51,9 @@ async def _stream_chat(message: str, user_id: str, session_id: str | None):
 
     try:
         has_streamed = False
-        match_depth = 0  # 嵌套深度，只在最外层 match_subgraph 时输出报告
+        match_depth = 0
+        pending_tools: list[str] = []
+        streamed_len = 0  # 本轮已流式的字符数（工具调用前需回退）
         async for event in supervisor_app.astream_events(initial_state, config, version="v2"):
             kind = event.get("event", "")
             name = event.get("name", "")
@@ -62,8 +64,7 @@ async def _stream_chat(message: str, user_id: str, session_id: str | None):
             elif kind == "on_chain_end" and name == "match_subgraph":
                 match_depth -= 1
 
-            # 只输出主 Agent（ChatTongyi）的文本，过滤工具内部 LLM 调用
-            # 匹配子图内部 LLM 调用也跳过
+            # 过滤匹配子图内部的事件
             if name != "ChatTongyi" and kind.startswith("on_chat_model"):
                 continue
 
@@ -73,15 +74,41 @@ async def _stream_chat(message: str, user_id: str, session_id: str | None):
                 chunk = event.get("data", {}).get("chunk")
                 if chunk and hasattr(chunk, "content") and chunk.content:
                     has_streamed = True
+                    streamed_len += len(chunk.content)
                     yield {"event": "message", "data": chunk.content}
 
             elif kind == "on_chat_model_end":
                 if match_depth > 0:
                     continue
                 output = event.get("data", {}).get("output")
-                has_tool = bool(output and hasattr(output, "tool_calls") and output.tool_calls)
-                if not has_tool and not has_streamed and output and hasattr(output, "content") and output.content:
-                    yield {"event": "message", "data": output.content}
+                if output and hasattr(output, "tool_calls") and output.tool_calls:
+                    # 有工具调用：通知前端回退推理文字
+                    pending_tools = [tc.get("name", "") for tc in output.tool_calls if tc.get("name")]
+                    if streamed_len > 0:
+                        yield {"event": "undo", "data": str(streamed_len)}
+                    has_streamed = False
+                    streamed_len = 0
+                else:
+                    if not has_streamed and output and hasattr(output, "content") and output.content:
+                        yield {"event": "message", "data": output.content}
+                    streamed_len = 0
+
+            # 工具节点开始执行 → 发送思考过程事件
+            elif kind == "on_chain_start" and name == "tools":
+                for tool_name in pending_tools:
+                    yield {
+                        "event": "thinking",
+                        "data": json.dumps({"tool": tool_name, "status": "start"}, ensure_ascii=False),
+                    }
+
+            # 工具节点执行完成
+            elif kind == "on_chain_end" and name == "tools":
+                for tool_name in pending_tools:
+                    yield {
+                        "event": "thinking",
+                        "data": json.dumps({"tool": tool_name, "status": "done"}, ensure_ascii=False),
+                    }
+                pending_tools = []
 
             elif kind == "on_chain_end":
                 output = event.get("data", {}).get("output")
@@ -123,7 +150,8 @@ async def get_audit_logs(
     size: int = Query(default=20, ge=1, le=100),
 ):
     """查询工具审计日志"""
-    from sqlalchemy import select, func, and_
+    from sqlalchemy import and_, func, select
+
     from src.core.database import async_session_factory
     from src.models.tool_audit import ToolAuditLog
 

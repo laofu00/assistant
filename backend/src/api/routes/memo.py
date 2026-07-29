@@ -8,7 +8,8 @@ from sqlalchemy import and_, func, select
 
 from src.core.database import async_session_factory
 from src.core.schema import R
-from src.models.memo import Memo, async_classify_memo
+from src.models.memo import Memo
+from src.services.memo_service import async_classify_memo
 
 router = APIRouter(prefix="/memo", tags=["备忘录"])
 
@@ -43,17 +44,17 @@ class MemoUpdate(BaseModel):
 @router.post("")
 async def create_memo(body: MemoCreate, request: Request):
     """创建备忘录"""
-    from src.tools.memo_tool import _normalize_date_terms, _parse_date
+    from src.core.date_utils import normalize_date_terms, parse_date
 
     user_id = _get_user_id(request)
 
-    content = _normalize_date_terms(body.content) if body.content else ""
+    content = normalize_date_terms(body.content) if body.content else ""
     # 用户手动指定分类优先，否则 AI 自动分类
     if body.category and body.category.strip():
         category = body.category.strip()
     else:
         category = await async_classify_memo(body.title, content)
-    parsed_date = _parse_date(body.due_date) if body.due_date else None
+    parsed_date = parse_date(body.due_date) if body.due_date else None
 
     async with async_session_factory() as session:
         memo = Memo(
@@ -72,7 +73,7 @@ async def create_memo(body: MemoCreate, request: Request):
 @router.put("/{memo_id}")
 async def update_memo(memo_id: int, body: MemoUpdate):
     """更新备忘录"""
-    from src.tools.memo_tool import _normalize_date_terms, _parse_date
+    from src.core.date_utils import normalize_date_terms, parse_date
 
     async with async_session_factory() as session:
         result = await session.execute(select(Memo).where(Memo.id == memo_id))
@@ -83,9 +84,9 @@ async def update_memo(memo_id: int, body: MemoUpdate):
         if body.title is not None:
             memo.title = body.title
         if body.content is not None:
-            memo.content = _normalize_date_terms(body.content)
+            memo.content = normalize_date_terms(body.content)
         if body.due_date is not None:
-            memo.due_date = _parse_date(body.due_date)
+            memo.due_date = parse_date(body.due_date)
         if body.status is not None:
             memo.status = body.status
         if body.category is not None and body.category.strip():

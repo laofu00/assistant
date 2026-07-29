@@ -4,7 +4,6 @@
 """
 
 import re
-from typing import override
 
 # 句子分隔符
 _SENTENCE_PATTERN = re.compile(r"[。！？.!?]\s*")

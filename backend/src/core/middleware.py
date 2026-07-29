@@ -26,10 +26,7 @@ _PUBLIC_PATHS = {
 
 
 def _is_public(path: str) -> bool:
-    for p in _PUBLIC_PATHS:
-        if path == p or path.startswith(p + "/"):
-            return True
-    return False
+    return any(path == p or path.startswith(p + "/") for p in _PUBLIC_PATHS)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
@@ -88,31 +85,27 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         auth_header = request.headers.get("Authorization", "")
         token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
-        # 回退到 X-User-ID（兼容未迁移的旧前端）
-        fallback = request.headers.get("X-User-ID", "").strip()
-
-        if not token and not fallback:
+        if not token:
             return None
 
         # 1. 解析 JWT 获取 user_id
-        user_id = None
-        if token:
-            uid = get_user_id_from_token(token)
-            if uid:
-                user_id = uid
-
+        user_id = get_user_id_from_token(token)
         if not user_id:
-            user_id = fallback or "anonymous"
+            return None
 
         # 2. 校验 Redis 中是否存在该 token
-        if token and user_id != "anonymous":
-            try:
-                redis = await get_redis()
-                stored = await redis.get(f"{TOKEN_PREFIX}{user_id}")
-                if stored != token:
-                    logger.warning(f"Token 无效或已过期: user_id={user_id}")
-                    return None
-            except Exception as e:
-                logger.warning(f"Redis 校验失败（放行）: {e}")
+        try:
+            redis = await get_redis()
+            stored = await redis.get(f"{TOKEN_PREFIX}{user_id}")
+            if stored != token:
+                logger.warning(f"Token 无效或已过期: user_id={user_id}")
+                return None
+        except Exception as e:
+            from src.core.config import settings
+            if settings.DEBUG:
+                logger.warning(f"Redis 校验失败（DEBUG 模式放行）: {e}")
+            else:
+                logger.error(f"Redis 校验失败（拒绝请求）: {e}")
+                return None
 
         return user_id

@@ -1,14 +1,13 @@
 """简历匹配多智能体 — TechMatchAgent + ExpMatchAgent + RiskAssessAgent 并行评估
 
-三个 Agent 使用 asyncio.gather 并行执行，汇总节点加权平均生成 Markdown 报告。
+三个 Agent 通过 LangGraph Send 机制并行执行，汇总节点加权平均生成 Markdown 报告。
 """
 
-import asyncio
 import json
 import re
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_community.chat_models.tongyi import ChatTongyi
+from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
 from src.core.config import settings
@@ -165,21 +164,6 @@ async def _invoke_agent(system_prompt: str, resume_text: str, jd_text: str, mode
     except Exception as e:
         logger.error(f"Agent 调用失败: {e}")
         return {"error": str(e)}
-
-
-# ==================== 并行调用 ====================
-
-
-async def run_parallel_agents(resume_text: str, jd_text: str) -> tuple[dict, dict, dict]:
-    """并行执行三个 Agent"""
-    tasks = [
-        _invoke_agent(TECH_MATCH_PROMPT, resume_text, jd_text),
-        _invoke_agent(EXP_MATCH_PROMPT, resume_text, jd_text),
-        _invoke_agent(RISK_ASSESS_PROMPT, resume_text, jd_text),
-    ]
-    results = await asyncio.gather(*tasks)
-    logger.info(f"三 Agent 并行评估完成: tech={results[0].get('score')}, exp={results[1].get('score')}, risk={results[2].get('score')}")
-    return results[0], results[1], results[2]
 
 
 # ==================== 汇总 ====================

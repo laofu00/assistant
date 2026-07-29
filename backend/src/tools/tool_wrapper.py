@@ -1,6 +1,7 @@
 """工具调用包装器 — 超时控制 + 缓存 + 审计 + 重复检测 + 熔断"""
 
 import asyncio
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -64,7 +65,8 @@ class ToolExecutor:
                 return cached
 
         # 5. 超时控制
-        timeout = settings.TOOL_WRITE_TIMEOUT if meta and meta.permission == ToolPermission.READ_WRITE else settings.TOOL_TIMEOUT
+        is_write = meta and meta.permission == ToolPermission.READ_WRITE
+        timeout = settings.TOOL_WRITE_TIMEOUT if is_write else settings.TOOL_TIMEOUT
         start = asyncio.get_event_loop().time()
 
         try:
@@ -81,7 +83,7 @@ class ToolExecutor:
 
             return str(result)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
             self.registry.record_failure(tool_name)
             self._log_audit(trace_id, user_id, tool_name, str(args)[:200], "", duration_ms, False, "超时")
@@ -114,8 +116,15 @@ class ToolExecutor:
         return func(**args)
 
     def _record_call(self, session_id: str, tool_name: str) -> None:
+        # 限制最大 session 数，防止内存泄漏
+        if len(self._call_history) >= 10_000:
+            oldest = next(iter(self._call_history))
+            del self._call_history[oldest]
         if session_id not in self._call_history:
             self._call_history[session_id] = []
+        # 限制单个 session 的最大调用记录数
+        if len(self._call_history[session_id]) >= 200:
+            self._call_history[session_id] = self._call_history[session_id][-100:]
         self._call_history[session_id].append(tool_name)
 
     def _detect_duplicate(self, session_id: str, tool_name: str) -> bool:
@@ -136,13 +145,14 @@ class ToolExecutor:
         error: str = "",
     ) -> None:
         """记录审计日志（异步写入 DB，失败不影响主流程）"""
-        try:
-            logger.bind(trace_id=trace_id, user_id=user_id).info(
-                f"tool={tool_name} result={'SUCCESS' if success else 'FAILED'} duration={duration_ms}ms input={tool_input[:100]} output={tool_output[:100]}"
-            )
+        status = "SUCCESS" if success else "FAILED"
+        log_msg = (
+            f"tool={tool_name} result={status} duration={duration_ms}ms "
+            f"input={tool_input[:100]} output={tool_output[:100]}"
+        )
+        with contextlib.suppress(Exception):
+            logger.bind(trace_id=trace_id, user_id=user_id).info(log_msg)
             # TODO: 第二阶段后续将异步写入 tool_audit_log 表
-        except Exception:
-            pass
 
 
 # 全局实例

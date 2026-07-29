@@ -2,18 +2,18 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Query
-from loguru import logger
+from fastapi import APIRouter, Depends, Query
 
+from src.core.auth_deps import get_current_user_id
 from src.core.schema import R
 from src.token.statistics import statistics_service
 
-router = APIRouter(prefix="/token", tags=["Token统计"])
+router = APIRouter(prefix="/token", tags=["Token统计"], dependencies=[Depends(get_current_user_id)])
 
 
 @router.get("/records")
 async def get_records(
-    user_id: str = Query(default="test"),
+    user_id: str = Depends(get_current_user_id),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
@@ -43,7 +43,7 @@ async def get_records(
 
 @router.get("/statistics")
 async def get_statistics(
-    user_id: str = Query(default="test"),
+    user_id: str = Depends(get_current_user_id),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
 ):
@@ -64,7 +64,7 @@ async def get_statistics(
 
 @router.get("/by-model")
 async def get_by_model(
-    user_id: str = Query(default="test"),
+    user_id: str = Depends(get_current_user_id),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
 ):
@@ -77,7 +77,7 @@ async def get_by_model(
 
 @router.get("/by-date")
 async def get_by_date(
-    user_id: str = Query(default="test"),
+    user_id: str = Depends(get_current_user_id),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
 ):
@@ -89,7 +89,7 @@ async def get_by_date(
 
 
 @router.get("/quota")
-async def get_quota(user_id: str = Query(default="test")):
+async def get_quota(user_id: str = Depends(get_current_user_id)):
     """今日用量摘要"""
     result = await statistics_service.get_today_usage(user_id)
     result["daily_limit"] = 500_000

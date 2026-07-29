@@ -3,16 +3,15 @@
 对齐 Java 版 MemoTool：add/list/complete/delete/update/list_by_date + 自动分类 + 相对日期替换
 """
 
-import re
-from datetime import date, datetime, timedelta
-
 from langchain_core.tools import tool
 from loguru import logger
 from sqlalchemy import and_, func, select
 
 from src.core.cache import tool_cache
 from src.core.database import async_session_factory
-from src.models.memo import Memo, async_classify_memo
+from src.core.date_utils import DATE_FORMAT, normalize_date_terms, parse_date
+from src.models.memo import Memo
+from src.services.memo_service import async_classify_memo
 
 
 def _clear_memo_cache(user_id: str) -> None:
@@ -21,44 +20,6 @@ def _clear_memo_cache(user_id: str) -> None:
     n = tool_cache.invalidate_by_prefix(prefix)
     if n:
         logger.debug(f"已清除 {n} 条 memo 缓存: user={user_id}")
-
-_DATE_FORMAT = "%Y-%m-%d"
-
-
-# ==================== 日期工具函数 ====================
-
-def _normalize_date_terms(text: str) -> str:
-    """替换文本中的相对日期为具体日期"""
-    if not text:
-        return text
-    today = date.today()
-    replacements = {
-        "今天": today.strftime(_DATE_FORMAT),
-        "昨天": (today - timedelta(days=1)).strftime(_DATE_FORMAT),
-        "明天": (today + timedelta(days=1)).strftime(_DATE_FORMAT),
-        "后天": (today + timedelta(days=2)).strftime(_DATE_FORMAT),
-        "前天": (today - timedelta(days=2)).strftime(_DATE_FORMAT),
-    }
-    result = text
-    for k, v in replacements.items():
-        result = result.replace(k, v)
-    return result
-
-
-def _parse_date(date_str: str | None) -> date | None:
-    """解析日期字符串"""
-    if not date_str or not date_str.strip():
-        return None
-    try:
-        # 尝试 yyyy-MM-dd
-        return datetime.strptime(date_str.strip(), _DATE_FORMAT).date()
-    except ValueError:
-        pass
-    # 尝试 "2026年7月2日"
-    m = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日", date_str.strip())
-    if m:
-        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    return None
 
 
 # ==================== 工具函数 ====================
@@ -78,9 +39,9 @@ async def add_memo(title: str, content: str, due_date: str | None, user_id: str)
     if not content or not content.strip():
         return "备忘录内容不能为空"
 
-    content = _normalize_date_terms(content)
+    content = normalize_date_terms(content)
     category = await async_classify_memo(title, content)
-    parsed_date = _parse_date(due_date)
+    parsed_date = parse_date(due_date)
 
     async with async_session_factory() as session:
         memo = Memo(
@@ -141,7 +102,7 @@ async def list_memos(
 
         sb = f"找到 {total} 条备忘录（第{page}页）:\n"
         for i, m in enumerate(memos):
-            due = m.due_date.strftime(_DATE_FORMAT) if m.due_date else "无"
+            due = m.due_date.strftime(DATE_FORMAT) if m.due_date else "无"
             content = (m.content or "")[:500]
             sb += f"{i + 1}. ID:{m.id} [{m.category}] {m.title} | 到期:{due}"
             if content:
@@ -213,10 +174,10 @@ async def update_memo(memo_id: int, title: str | None, content: str | None, due_
         if title and title.strip():
             memo.title = title.strip()
         if content and content.strip():
-            memo.content = _normalize_date_terms(content)
+            memo.content = normalize_date_terms(content)
             memo.category = await async_classify_memo(memo.title, memo.content)
         if due_date:
-            parsed = _parse_date(due_date)
+            parsed = parse_date(due_date)
             if parsed:
                 memo.due_date = parsed
 
@@ -242,8 +203,8 @@ async def list_memos_by_date(
         keyword: 可选关键词
         limit: 返回数量（默认10）
     """
-    start = _parse_date(start_date)
-    end = _parse_date(end_date)
+    start = parse_date(start_date)
+    end = parse_date(end_date)
     if not start or not end:
         return "日期格式错误，请使用 yyyy-MM-dd 格式"
 
@@ -267,7 +228,7 @@ async def list_memos_by_date(
 
         sb = f"在 {start_date} ~ {end_date} 范围内找到 {len(memos)} 条备忘录:\n"
         for i, m in enumerate(memos):
-            due = m.due_date.strftime(_DATE_FORMAT) if m.due_date else "无"
+            due = m.due_date.strftime(DATE_FORMAT) if m.due_date else "无"
             content = (m.content or "")[:500]
             sb += f"{i + 1}. ID:{m.id} [{m.category}] {m.title} | 到期:{due}"
             if content:

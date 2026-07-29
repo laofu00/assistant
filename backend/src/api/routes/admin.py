@@ -1,14 +1,14 @@
 """管理端点 — PUT /admin/log-level, POST /admin/cache/clear, POST /admin/backup/chromadb"""
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from loguru import logger
 
+from src.core.auth_deps import require_admin
 from src.core.cache import tool_cache
-from src.core.config import settings
 from src.core.schema import R
 from src.token.dead_letter import dead_letter
 
-router = APIRouter(prefix="/admin", tags=["管理"])
+router = APIRouter(prefix="/admin", tags=["管理"], dependencies=[Depends(require_admin)])
 
 
 @router.put("/log-level")

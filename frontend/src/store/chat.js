@@ -39,11 +39,13 @@ export const useChatStore = defineStore('chat', () => {
       messages.value = [
         {
           role: 'ai',
-          content: '您好，我是您的智能助手，可以帮您做以下事情：\n' +
-              '          1. 创建、查询、更新或删除备忘录 \n' +
-              '          2. 从知识库中检索信息 \n' +
-              '          4. 整理信息并通过邮件发送 \n' +
-              '          请告诉我您需要什么帮助？',
+          content: '您好，我是您的智能助手 Smart Assistant，可以帮您做以下事情：\n'
+              + '1. 创建、查询、更新或删除备忘录（AI 自动分类）\n'
+              + '2. 从知识库中检索信息、上传和管理文档\n'
+              + '3. 简历与 JD 匹配评估（支持招聘方/求职者双视角）\n'
+              + '4. 整理信息并通过邮件发送\n'
+              + '5. 日期查询与计算\n'
+              + '请告诉我您需要什么帮助？',
           time: getCurrentTime(),
           intent: 'GENERAL',
           references: []
@@ -110,11 +112,6 @@ export const useChatStore = defineStore('chat', () => {
   // 开始流式AI消息，返回消息索引
   const startStreamAiMessage = () => {
     const index = messages.value.length
-    console.log('🔵 startStreamAiMessage called:', {
-      index,
-      currentMessagesCount: messages.value.length,
-      currentMessages: messages.value.map(m => ({ role: m.role, contentLength: m.content.length }))
-    })
     // 创建新数组以确保响应式更新
     const newMessages = [...messages.value]
     newMessages.push({
@@ -122,21 +119,76 @@ export const useChatStore = defineStore('chat', () => {
       content: '',
       time: getCurrentTime(),
       intent: 'GENERAL',
-      references: []
+      references: [],
+      thinkingSteps: []
     })
     messages.value = newMessages
     streamingMessageIndex.value = index
-    console.log('🟢 Streaming message created:', {
-      streamingMessageIndex: streamingMessageIndex.value,
-      newMessagesCount: messages.value.length,
-      newMessageContent: messages.value[index].content
-    })
     saveMessagesToStorage()
     return index
   }
 
+  // 添加思考步骤
+  const addThinkingStep = (tool, label) => {
+    if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
+      const newMessages = [...messages.value]
+      const msg = newMessages[streamingMessageIndex.value]
+      const steps = [...(msg.thinkingSteps || [])]
+      steps.push({ tool, label, status: 'running', time: getCurrentTime() })
+      newMessages[streamingMessageIndex.value] = { ...msg, thinkingSteps: steps }
+      messages.value = newMessages
+    }
+  }
+
+  // 正文开始输出时，自动把所有运行的思考步骤标记为完成
+  const _autoCompleteThinking = () => {
+    if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
+      const msg = messages.value[streamingMessageIndex.value]
+      const steps = msg.thinkingSteps || []
+      if (steps.some(s => s.status === 'running')) {
+        const newMessages = [...messages.value]
+        const completed = steps.map(s => s.status === 'running' ? { ...s, status: 'done' } : s)
+        newMessages[streamingMessageIndex.value] = { ...msg, thinkingSteps: completed }
+        messages.value = newMessages
+        return true
+      }
+    }
+    return false
+  }
+
+  // 回退流式内容（去掉推理文字）
+  const truncateStreamContent = (n) => {
+    if (n <= 0) return
+    if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
+      const newMessages = [...messages.value]
+      const msg = newMessages[streamingMessageIndex.value]
+      const content = msg.content || ''
+      if (content.length >= n) {
+        newMessages[streamingMessageIndex.value] = { ...msg, content: content.slice(0, -n) }
+        messages.value = newMessages
+    }
+    }
+  }
+
+  // 完成最后一个思考步骤
+  const completeThinkingStep = () => {
+    if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
+      const newMessages = [...messages.value]
+      const msg = newMessages[streamingMessageIndex.value]
+      const steps = [...(msg.thinkingSteps || [])]
+      if (steps.length > 0) {
+        steps[steps.length - 1] = { ...steps[steps.length - 1], status: 'done' }
+        newMessages[streamingMessageIndex.value] = { ...msg, thinkingSteps: steps }
+        messages.value = newMessages
+      }
+    }
+  }
+
   // 追加流式内容到当前流式消息
   const appendStreamContent = (content) => {
+    // 首次收到正文时，标记所有运行中的思考步骤为完成
+    _autoCompleteThinking()
+
     // 检测 JSON 编码的文本（后端对多行内容使用 json.dumps 保护换行格式）
     if (content.length > 0 && content[0] === '"') {
       try {
@@ -314,6 +366,9 @@ export const useChatStore = defineStore('chat', () => {
     appendStreamContent,
     completeStreamMessage,
     abortStreamMessage,
+    addThinkingStep,
+    completeThinkingStep,
+    truncateStreamContent,
     clearMessages,
     setLoading,
     setInputMessage,

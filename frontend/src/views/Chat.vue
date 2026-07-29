@@ -19,6 +19,44 @@
 
             <!-- AI 消息 -->
             <template v-else>
+              <!-- 思考过程卡片 -->
+              <div v-if="message.thinkingSteps && message.thinkingSteps.length > 0" class="thinking-steps">
+                <!-- 运行中的步骤：始终展开 -->
+                <div
+                  v-for="step in message.thinkingSteps.filter(s => s.status === 'running')"
+                  :key="step.tool"
+                  class="thinking-step running"
+                >
+                  <div class="thinking-step-header">
+                    <span class="thinking-dot running"></span>
+                    <span class="thinking-label">{{ step.label }}</span>
+                  </div>
+                </div>
+                <!-- 已完成的步骤：折叠为一行摘要，点击展开/收起 -->
+                <div
+                  v-if="doneCount(message) > 0"
+                  :class="['thinking-step', 'done', { collapsed: collapsedSteps[index] }]"
+                >
+                  <div class="thinking-step-header" @click="toggleStep(index)">
+                    <span class="thinking-dot done">✓</span>
+                    <span class="thinking-label">
+                      {{ collapsedSteps[index] ? `已完成 ${doneCount(message)} 个步骤` : '' }}
+                    </span>
+                    <span class="thinking-arrow">{{ collapsedSteps[index] ? '▸' : '▾' }}</span>
+                  </div>
+                  <div v-if="!collapsedSteps[index]" class="thinking-step-detail">
+                    <div
+                      v-for="step in message.thinkingSteps.filter(s => s.status === 'done')"
+                      :key="step.tool"
+                      class="thinking-detail-item"
+                    >
+                      <span class="thinking-done-icon">✓</span>
+                      {{ step.label }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div class="message-content ai-content" v-html="renderMarkdown(message.content)"></div>
 
             <!-- 意图标签 -->
@@ -50,7 +88,7 @@
         </div>
         <div v-if="loading" class="loading-indicator">
           <el-icon class="is-loading"><Loading /></el-icon>
-          正在思考...
+          {{ thinkingText }}
         </div>
       </div>
 
@@ -87,7 +125,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, computed } from 'vue'
+import { ref, onMounted, nextTick, computed, reactive } from 'vue'
 import { chatApi } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, DocumentCopy } from '@element-plus/icons-vue'
@@ -115,6 +153,39 @@ marked.setOptions({
 const chatStore = useChatStore()
 const userStore = useUserStore()
 const messagesContainer = ref(null)
+const thinkingText = ref('正在思考...')
+const collapsedSteps = reactive({})  // 追踪哪些消息的步骤被收起
+
+const toggleStep = (msgIdx) => {
+  collapsedSteps[msgIdx] = !collapsedSteps[msgIdx]
+}
+
+const doneCount = (msg) => {
+  return (msg.thinkingSteps || []).filter(s => s.status === 'done').length
+}
+
+// 工具名称中文映射
+const toolNameMap = {
+  'add_memo': '创建备忘录',
+  'list_memos': '查询备忘录',
+  'update_memo': '更新备忘录',
+  'delete_memo': '删除备忘录',
+  'complete_memo': '完成备忘录',
+  'list_memos_by_date': '按日期查询备忘录',
+  'search_knowledge': '检索知识库',
+  'upload_knowledge': '上传文档到知识库',
+  'get_document_content': '获取文档内容',
+  'list_knowledge': '列出知识库文件',
+  'delete_knowledge': '删除知识库文档',
+  'preview_email': '生成邮件预览',
+  'do_send_email': '发送邮件',
+  'do_send_formatted_email': '发送格式化邮件',
+  'get_current_date': '获取当前日期',
+  'get_date_after_days': '计算日期',
+  'get_current_datetime': '获取当前时间',
+  'parse_date_range': '解析日期范围',
+  'get_current_user_email': '获取用户邮箱',
+}
 
 const messages = computed(() => chatStore.messages)
 const loading = computed(() => chatStore.loading)
@@ -179,6 +250,7 @@ const sendMessage = async () => {
 
   chatStore.startStreamAiMessage()
   chatStore.setLoading(true)
+  thinkingText.value = '正在思考...'
   scrollToBottom()
 
   try {
@@ -186,6 +258,7 @@ const sendMessage = async () => {
       message,
       // 流式块回调
       (chunk) => {
+        thinkingText.value = '正在输出...'
         chatStore.appendStreamContent(chunk)
         scrollToBottom()
       },
@@ -200,10 +273,26 @@ const sendMessage = async () => {
         console.error('流式请求错误:', error)
         chatStore.abortStreamMessage()
         chatStore.setLoading(false)
+        thinkingText.value = '正在思考...'
         if (!handleAuthError(error)) {
           ElMessage.error('发送消息失败: ' + error.message)
         }
         scrollToBottom()
+      },
+      // 思考过程回调
+      (thinking) => {
+        if (thinking.status === 'start') {
+          const name = toolNameMap[thinking.tool] || thinking.tool
+          chatStore.addThinkingStep(thinking.tool, name)
+          thinkingText.value = `正在执行：${name}...`
+        } else if (thinking.status === 'done') {
+          chatStore.completeThinkingStep()
+          thinkingText.value = '正在思考...'
+        }
+      },
+      // 回退推理文字回调
+      (n) => {
+        chatStore.truncateStreamContent(n)
       }
     )
   } catch (error) {
@@ -411,6 +500,118 @@ onMounted(() => {
 .ai-content :deep(h1) { font-size: 18px; }
 .ai-content :deep(h2) { font-size: 16px; }
 .ai-content :deep(h3) { font-size: 15px; }
+
+/* ─── 思考过程卡片 ─── */
+.thinking-steps {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thinking-step {
+  background: #f0f6ff;
+  border: 1px solid #c6ddf7;
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.thinking-step.done {
+  background: #f6f8fa;
+  border-color: #dfe3e8;
+}
+
+.thinking-step.done.collapsed {
+  background: #f8f9fa;
+  border-color: #e8eaed;
+}
+
+.thinking-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  user-select: none;
+}
+
+.thinking-step.done .thinking-step-header {
+  cursor: pointer;
+}
+
+.thinking-step.done .thinking-step-header:hover {
+  background: #e8f0fe;
+}
+
+.thinking-step.running .thinking-step-header {
+  cursor: default;
+}
+
+.thinking-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.thinking-dot.running {
+  background: #409eff;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.thinking-dot.done {
+  background: #67c23a;
+  color: #fff;
+}
+
+.thinking-label {
+  flex: 1;
+  color: #303133;
+}
+
+.thinking-step.done .thinking-label {
+  color: #909399;
+  font-size: 12px;
+}
+
+.thinking-arrow {
+  font-size: 10px;
+  color: #909399;
+  flex-shrink: 0;
+}
+
+/* 已完成步骤的展开详情 */
+.thinking-step-detail {
+  border-top: 1px solid #e8eaed;
+  padding: 6px 0;
+}
+
+.thinking-detail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.thinking-done-icon {
+  color: #67c23a;
+  font-size: 10px;
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
 /* ─── 消息元数据 ─── */
 .intent-tag {

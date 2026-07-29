@@ -21,9 +21,6 @@ import src.models.tool_audit  # noqa: F401
 import src.models.knowledge_file  # noqa: F401
 import src.models.user  # noqa: F401
 import src.models.user_preference  # noqa: F401
-import src.models.user_token  # noqa: F401
-import src.models.operation_log  # noqa: F401
-import src.models.user_notification  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
