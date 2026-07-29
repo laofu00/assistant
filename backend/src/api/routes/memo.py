@@ -1,10 +1,10 @@
 """备忘录 REST API — CRUD 端点（面向前端）"""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import and_, select, func
+from sqlalchemy import and_, func, select
 
 from src.core.database import async_session_factory
 from src.core.schema import R
@@ -43,13 +43,16 @@ class MemoUpdate(BaseModel):
 @router.post("")
 async def create_memo(body: MemoCreate, request: Request):
     """创建备忘录"""
-    from src.tools.memo_tool import _parse_date, _normalize_date_terms
+    from src.tools.memo_tool import _normalize_date_terms, _parse_date
 
     user_id = _get_user_id(request)
 
     content = _normalize_date_terms(body.content) if body.content else ""
     # 用户手动指定分类优先，否则 AI 自动分类
-    category = body.category.strip() if body.category and body.category.strip() else await async_classify_memo(body.title, content)
+    if body.category and body.category.strip():
+        category = body.category.strip()
+    else:
+        category = await async_classify_memo(body.title, content)
     parsed_date = _parse_date(body.due_date) if body.due_date else None
 
     async with async_session_factory() as session:
@@ -69,7 +72,7 @@ async def create_memo(body: MemoCreate, request: Request):
 @router.put("/{memo_id}")
 async def update_memo(memo_id: int, body: MemoUpdate):
     """更新备忘录"""
-    from src.tools.memo_tool import _parse_date, _normalize_date_terms
+    from src.tools.memo_tool import _normalize_date_terms, _parse_date
 
     async with async_session_factory() as session:
         result = await session.execute(select(Memo).where(Memo.id == memo_id))

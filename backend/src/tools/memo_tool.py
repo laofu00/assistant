@@ -3,13 +3,12 @@
 对齐 Java 版 MemoTool：add/list/complete/delete/update/list_by_date + 自动分类 + 相对日期替换
 """
 
-from datetime import date, datetime, timedelta
 import re
+from datetime import date, datetime, timedelta
 
 from langchain_core.tools import tool
 from loguru import logger
-from sqlalchemy import select, func, and_
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, func, select
 
 from src.core.cache import tool_cache
 from src.core.database import async_session_factory
@@ -102,7 +101,13 @@ async def add_memo(title: str, content: str, due_date: str | None, user_id: str)
 
 
 @tool
-async def list_memos(user_id: str, keyword: str | None = None, category: str | None = None, page: int = 1, limit: int = 10) -> str:
+async def list_memos(
+    user_id: str,
+    keyword: str | None = None,
+    category: str | None = None,
+    page: int = 1,
+    limit: int = 10,
+) -> str:
     """查询用户的备忘录列表，支持按关键词和分类过滤。
 
     Args:
@@ -221,7 +226,13 @@ async def update_memo(memo_id: int, title: str | None, content: str | None, due_
 
 
 @tool
-async def list_memos_by_date(user_id: str, start_date: str, end_date: str, keyword: str | None = None, limit: int = 10) -> str:
+async def list_memos_by_date(
+    user_id: str,
+    start_date: str,
+    end_date: str,
+    keyword: str | None = None,
+    limit: int = 10,
+) -> str:
     """按到期日期范围查询备忘录。
 
     Args:

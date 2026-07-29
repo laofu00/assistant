@@ -148,6 +148,7 @@ async def async_classify_memo(title: str, content: str | None = None) -> str:
     try:
         from langchain_community.chat_models.tongyi import ChatTongyi
         from langchain_core.messages import HumanMessage, SystemMessage
+
         from src.core.config import settings
 
         llm = ChatTongyi(
