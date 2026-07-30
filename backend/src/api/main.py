@@ -1,6 +1,6 @@
 """FastAPI 应用工厂 — 生命周期 + CORS + GZip + 限流 + 指标 + 全局异常处理"""
 
-import time
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"环境: {settings.ENVIRONMENT}, 模型: {settings.MODEL_NAME}")
 
     # 确保数据目录存在
-    for d in ["data/chroma_db", "data/uploads", "data/dead_letter", "logs"]:
+    for d in [settings.chroma_path, str(settings.upload_dir), "data/dead_letter", "logs"]:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     # 启动 token 写入后台任务
@@ -37,12 +37,33 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Token 后台任务启动失败（不影响服务）: {e}")
 
+    # 启动死信队列定期重试
+    try:
+        from src.token.dead_letter import dead_letter
+        asyncio.create_task(_retry_dead_letters(dead_letter))
+    except Exception as e:
+        logger.warning(f"死信重试任务启动失败（不影响服务）: {e}")
+
     yield
 
     # 关闭
     logger.info("应用正在关闭...")
     # 等待现有请求完成
     await _shutdown_db()
+
+
+async def _retry_dead_letters(dlq, interval: int = 60) -> None:
+    """定期重试死信队列中的失败记录（默认每 60 秒）"""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            count = await dlq.get_pending_count()
+            if count > 0:
+                success = await dlq.retry_pending()
+                if success > 0:
+                    logger.info(f"[死信] 重试成功 {success}/{count}")
+        except Exception as e:
+            logger.warning(f"[死信] 重试异常: {e}")
 
 
 async def _shutdown_db() -> None:

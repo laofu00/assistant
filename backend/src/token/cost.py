@@ -30,6 +30,11 @@ class CostCalculator:
         p["dashscope-qwen-max"] = ModelPrice(0.012, 0.012)
         p["dashscope-qwen-turbo"] = ModelPrice(0.0008, 0.002)
 
+        # 嵌入模型（仅输入 token 计费，输出价格填 0）
+        p["dashscope-text-embedding-v3"] = ModelPrice(0.0007, 0)
+        # 重排序模型
+        p["dashscope-gte-rerank"] = ModelPrice(0.0007, 0)
+
         # Ollama 本地模型（象征性成本）
         p["ollama-deepseek-r1:8b"] = ModelPrice(0.00001, 0.00001)
         p["ollama-llama3.2"] = ModelPrice(0.00001, 0.00001)

@@ -3,11 +3,10 @@
 对齐 Java 版 ReactAgentConfig.SYSTEM_PROMPT（~80 行规则）
 """
 
-from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from loguru import logger
 
-from src.core.config import settings
+from src.core.llm_factory import get_llm, update_trace_context
 from src.core.memory import sanitize_user_input
 from src.models.state import AgentState
 
@@ -94,23 +93,20 @@ def create_agent_node(tools: list):
     Returns:
         节点函数 agent_node(state) → {"messages": [AIMessage]}
     """
-    llm = ChatTongyi(
-        model=settings.MODEL_NAME,
-        dashscope_api_key=settings.OPENAI_API_KEY,
-        temperature=0.3,
-        streaming=True,
-    )
+    llm = get_llm(temperature=0.3, streaming=True)
     llm_with_tools = llm.bind_tools(tools)
 
     def agent_node(state: AgentState) -> dict:
         """Agent 节点：LLM 决策 + 工具选择"""
-        from src.token.token_callback import TokenCaptureCallback
-
         messages = state["messages"]
-        user_id = state.get("user_id", "")
-        session_id = state.get("session_id", "")
-        trace_id = state.get("trace_id", "")
         tool_chain = state.get("tool_chain", [])
+
+        # 更新追踪上下文（工具链 + intent）
+        update_trace_context(
+            intent_type="REACT_AGENT",
+            call_purpose="react_agent",
+            tool_chain=tool_chain,
+        )
 
         # 确保 System Prompt 在最前面
         if not messages or not isinstance(messages[0], SystemMessage):
@@ -127,15 +123,7 @@ def create_agent_node(tools: list):
                     messages[messages.index(last)] = HumanMessage(content=sanitized)
 
         try:
-            callback = TokenCaptureCallback(
-                trace_id=trace_id,
-                session_id=session_id,
-                user_id=user_id,
-                intent_type="REACT_AGENT",
-                call_purpose="react_agent",
-                tool_chain=tool_chain,
-            )
-            response = llm_with_tools.invoke(messages, config={"callbacks": [callback]})
+            response = llm_with_tools.invoke(messages)
             return {"messages": [response]}
         except Exception as e:
             logger.error(f"Agent 决策失败: {e}")

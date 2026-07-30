@@ -13,6 +13,7 @@ from langgraph.graph import END, StateGraph
 from loguru import logger
 
 from src.agents.react_agent import create_agent_node
+from src.core.llm_factory import set_trace_context
 from src.core.memory import smart_memory
 from src.models.state import AgentState
 from src.tools import date_tool, email_tool, knowledge_tool, memo_tool, user_tool
@@ -189,11 +190,6 @@ async def _tools_node(state: AgentState) -> dict:
     }
 
 
-async def _capture_token_node(state: AgentState) -> dict:
-    """Token 捕获（由 TokenCaptureCallback 在 LLM 调用时实时写入）"""
-    return {}
-
-
 async def _save_memory_node(state: AgentState) -> dict:
     """保存对话记忆节点"""
     session_id = state.get("session_id", "")
@@ -212,14 +208,14 @@ async def _save_memory_node(state: AgentState) -> dict:
 # ==================== 路由函数 ====================
 
 
-def _route_after_agent(state: AgentState) -> Literal["tools", "capture_token"]:
-    """代理节点后的条件路由：有 tool_calls → tools，否则 → capture_token"""
+def _route_after_agent(state: AgentState) -> Literal["tools", "save_memory"]:
+    """代理节点后的条件路由：有 tool_calls → tools，否则 → save_memory"""
     last_message = state["messages"][-1] if state["messages"] else None
     if last_message and isinstance(last_message, AIMessage):
         tool_calls = getattr(last_message, "tool_calls", [])
         if tool_calls:
             return "tools"
-    return "capture_token"
+    return "save_memory"
 
 
 # ==================== 图构建 ====================
@@ -237,16 +233,14 @@ def create_react_workflow() -> StateGraph:
     workflow.add_node("load_memory", _load_memory_node)
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", _tools_node)
-    workflow.add_node("capture_token", _capture_token_node)
     workflow.add_node("save_memory", _save_memory_node)
 
     # 边
     workflow.set_entry_point("quota_check")
     workflow.add_edge("quota_check", "load_memory")
     workflow.add_edge("load_memory", "agent")
-    workflow.add_conditional_edges("agent", _route_after_agent, {"tools": "tools", "capture_token": "capture_token"})
+    workflow.add_conditional_edges("agent", _route_after_agent, {"tools": "tools", "save_memory": "save_memory"})
     workflow.add_edge("tools", "agent")  # 工具结果返回 agent 继续推理
-    workflow.add_edge("capture_token", "save_memory")
     workflow.add_edge("save_memory", END)
 
     return workflow
@@ -278,6 +272,12 @@ async def run_react_agent(
     """
     sid = session_id or f"session_{uuid.uuid4().hex[:8]}"
     trace_id = uuid.uuid4().hex
+
+    set_trace_context(
+        trace_id=trace_id,
+        session_id=sid,
+        user_id=user_id,
+    )
 
     initial_state: AgentState = {
         "messages": [HumanMessage(content=message)],

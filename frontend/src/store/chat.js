@@ -45,7 +45,7 @@ export const useChatStore = defineStore('chat', () => {
               + '3. 简历与 JD 匹配评估（支持招聘方/求职者双视角）\n'
               + '4. 整理信息并通过邮件发送\n'
               + '5. 日期查询与计算\n'
-              + '请告诉我您需要什么帮助？',
+              + '\n请告诉我您需要什么帮助？',
           time: getCurrentTime(),
           intent: 'GENERAL',
           references: []

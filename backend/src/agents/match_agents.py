@@ -6,11 +6,11 @@
 import json
 import re
 
-from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
 from src.core.config import settings
+from src.core.llm_factory import get_llm
 
 # ==================== System Prompts ====================
 
@@ -112,12 +112,8 @@ CANDIDATE_RISK_PROMPT = """你是资深HR面试教练，帮求职者分析在面
 
 # ==================== LLM 调用 ====================
 
-def _create_llm() -> ChatTongyi:
-    return ChatTongyi(
-        model=settings.MODEL_NAME,
-        dashscope_api_key=settings.OPENAI_API_KEY,
-        temperature=0,  # 评分场景要求可重现
-    )
+def _create_llm():
+    return get_llm(temperature=0, streaming=False)
 
 
 async def _invoke_agent(system_prompt: str, resume_text: str, jd_text: str, mode: str = "recruiter") -> dict:

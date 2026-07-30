@@ -16,6 +16,9 @@ class KnowledgeFile(Base):
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str | None] = mapped_column(String(500))
     file_type: Mapped[str | None] = mapped_column(String(10))  # txt/pdf/doc/docx/xls/xlsx
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)  # SHA256
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[int] = mapped_column(Integer, default=1, index=True)  # 1=有效 0=旧版本
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING/PROCESSING/COMPLETED/FAILED
     error_message: Mapped[str | None] = mapped_column(Text)

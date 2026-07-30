@@ -4,18 +4,23 @@
 三个评估 Agent（tech/exp/risk）通过 LangGraph Send 并行执行，结果逐步反馈前端
 """
 
-import asyncio
-from typing import Literal
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 from loguru import logger
 
 from src.agents.match_agents import (
-    TECH_MATCH_PROMPT, EXP_MATCH_PROMPT, RISK_ASSESS_PROMPT,
-    CANDIDATE_TECH_PROMPT, CANDIDATE_EXP_PROMPT, CANDIDATE_RISK_PROMPT,
-    _invoke_agent, summarize_results, summarize_candidate_results,
+    CANDIDATE_EXP_PROMPT,
+    CANDIDATE_RISK_PROMPT,
+    CANDIDATE_TECH_PROMPT,
+    EXP_MATCH_PROMPT,
+    RISK_ASSESS_PROMPT,
+    TECH_MATCH_PROMPT,
+    _invoke_agent,
+    summarize_candidate_results,
+    summarize_results,
 )
+from src.core.llm_factory import set_trace_context, update_trace_context
 from src.knowledge.vector_store import vector_store
 from src.models.state import AgentState
 
@@ -71,6 +76,7 @@ def _fanout_decision(state: AgentState) -> list[Send]:
 
 async def _tech_agent_node(state: AgentState) -> dict:
     """技术评估（根据 match_mode 切换视角）"""
+    update_trace_context(intent_type="MATCH_TECH", call_purpose="tech_eval")
     resume_text = state.get("_resume_text", "")
     jd_text = state.get("jd_text", "")
     mode = state.get("match_mode", "recruiter")
@@ -85,6 +91,7 @@ async def _tech_agent_node(state: AgentState) -> dict:
 
 async def _exp_agent_node(state: AgentState) -> dict:
     """经验评估（根据 match_mode 切换视角）"""
+    update_trace_context(intent_type="MATCH_EXP", call_purpose="exp_eval")
     resume_text = state.get("_resume_text", "")
     jd_text = state.get("jd_text", "")
     mode = state.get("match_mode", "recruiter")
@@ -99,6 +106,7 @@ async def _exp_agent_node(state: AgentState) -> dict:
 
 async def _risk_agent_node(state: AgentState) -> dict:
     """风险评估（根据 match_mode 切换视角）"""
+    update_trace_context(intent_type="MATCH_RISK", call_purpose="risk_eval")
     resume_text = state.get("_resume_text", "")
     jd_text = state.get("jd_text", "")
     mode = state.get("match_mode", "recruiter")
@@ -119,8 +127,16 @@ async def _summarize_node(state: AgentState) -> dict:
     resume_name = state.get("resume_filename", "")
     mode = state.get("match_mode", "recruiter")
 
-    if tech.get("error") or exp.get("error") or risk.get("error"):
-        logger.warning("部分 Agent 结果含错误，仍尝试生成报告")
+    # 文档缺失等前置错误：直接返回 _fanout_decision 设置的错误消息
+    if tech.get("error") and exp.get("error") and risk.get("error"):
+        error_report = state.get("match_report", "")
+        if error_report:
+            logger.warning("匹配前置条件不满足，返回错误提示")
+            return {
+                "match_report": error_report,
+                "final_score": 0.0,
+                "messages": state.get("messages", []),
+            }
 
     tech_score = tech.get("score", 0)
     exp_score = exp.get("score", 0)
@@ -143,7 +159,7 @@ async def _summarize_node(state: AgentState) -> dict:
     return {
         "match_report": report,
         "final_score": final,
-        "messages": state["messages"],
+        "messages": state.get("messages", []),
     }
 
 
@@ -181,6 +197,14 @@ async def run_match(
 ) -> dict:
     """运行简历匹配的便捷入口"""
     import uuid
+
+    sid = f"match_{uuid.uuid4().hex[:8]}"
+    trace_id = uuid.uuid4().hex
+    set_trace_context(
+        trace_id=trace_id,
+        session_id=sid,
+        user_id=user_id,
+    )
 
     initial_state: AgentState = {
         "messages": [],

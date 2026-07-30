@@ -1,6 +1,6 @@
 """知识库工具 — @tool 封装（5 个方法）"""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from langchain_core.tools import tool
 from loguru import logger
@@ -14,17 +14,27 @@ from src.knowledge.vector_store import vector_store
 
 @tool
 async def search_knowledge(query: str, user_id: str, top_k: int = 3) -> str:
-    """从用户的知识库中检索相关信息，用于回答用户问题。
+    """从用户的知识库中检索相关信息。返回检索到的知识片段原文，由你来整理回答用户。
 
     Args:
-        query: 用户问题
+        query: 检索关键词或问题
         user_id: 用户ID
         top_k: 返回最相似的K个片段（默认3）
     """
     k = max(1, min(top_k, 20))
     try:
-        result = await retrieval_pipeline.search_with_rag(user_id, query, k)
-        return result
+        docs = await retrieval_pipeline.search(user_id, query, k)
+        if not docs:
+            return "知识库中未找到相关信息。"
+
+        # 返回原始片段，由 Agent 自己整理回答（保证流式输出）
+        parts = ["以下是从知识库中检索到的相关信息：\n"]
+        for i, doc in enumerate(docs):
+            section = doc.get("metadata", {}).get("section", "")
+            label = f"片段 {i + 1}" + (f"（章节：{section}）" if section else "")
+            parts.append(f"{label}:\n{doc['text']}\n")
+        parts.append("请基于以上片段回答用户问题，使用片段中的信息，标注引用来源。")
+        return "\n".join(parts)
     except Exception as e:
         logger.error(f"知识库检索失败: {e}")
         return f"检索知识库时发生错误: {e}"
@@ -38,7 +48,6 @@ async def upload_knowledge(file_path: str, user_id: str) -> str:
         file_path: 本地文件路径（支持 txt/pdf/doc/docx/xlsx/xls）
         user_id: 用户ID
     """
-    import os
     from pathlib import Path
 
     path = Path(file_path)
@@ -51,20 +60,21 @@ async def upload_knowledge(file_path: str, user_id: str) -> str:
 
     try:
         content = await load_document(file_path, ext)
-        chunks = split_into_chunks(content, settings.KNOWLEDGE_CHUNK_SIZE, settings.KNOWLEDGE_OVERLAP)
+        chunk_results = split_into_chunks(content, settings.KNOWLEDGE_CHUNK_SIZE, settings.KNOWLEDGE_OVERLAP)
 
-        if not chunks:
+        if not chunk_results:
             return f"文件 [{path.name}] 内容为空，无法向量化"
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
+        texts = [c["text"] for c in chunk_results]
         metadatas = [
-            {"source": path.name, "user_id": user_id, "upload_time": now, "chunk_index": i}
-            for i in range(len(chunks))
+            {"source": path.name, "user_id": user_id, "version": 1, "active": 1, "upload_time": now, "chunk_index": i, "section": c.get("section", "")}
+            for i, c in enumerate(chunk_results)
         ]
 
-        vector_store.add_documents(user_id, chunks, metadatas)
-        logger.info(f"知识库上传成功: {path.name}, 用户: {user_id}, 分块数: {len(chunks)}")
-        return f"文档 [{path.name}] 上传成功，已拆分为 {len(chunks)} 个片段存入知识库"
+        await vector_store.add_documents(user_id, texts, metadatas)
+        logger.info(f"知识库上传成功: {path.name}, 用户: {user_id}, 分块数: {len(chunk_results)}")
+        return f"文档 [{path.name}] 上传成功，已拆分为 {len(chunk_results)} 个片段存入知识库"
     except Exception as e:
         logger.error(f"知识库上传失败: {e}")
         return f"上传文档失败: {e}"

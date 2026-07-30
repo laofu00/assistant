@@ -8,6 +8,7 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from src.api.schemas import ChatRequest
+from src.core.llm_factory import set_trace_context
 from src.core.schema import R
 from src.models.state import AgentState
 from src.workflows.supervisor_workflow import supervisor_app
@@ -21,6 +22,13 @@ async def _stream_chat(message: str, user_id: str, session_id: str | None):
 
     sid = session_id or f"session_{uuid.uuid4().hex[:8]}"
     trace_id = uuid.uuid4().hex
+
+    # 设置当前请求的 token 追踪上下文（后续所有 LLM 调用自动覆盖）
+    set_trace_context(
+        trace_id=trace_id,
+        session_id=sid,
+        user_id=user_id,
+    )
 
     from langchain_core.messages import HumanMessage
 

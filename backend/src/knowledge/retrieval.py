@@ -1,28 +1,81 @@
 """知识检索流水线 — 完整的 6 步 RAG 管道
 
 对齐 Java 版 KnowledgeServiceImpl 的检索流程：
-查询重写 → 混合检索(向量+FTS) → RRF融合 → MMR多样化 → LLM重排序 → RAG生成
+查询重写 → 混合检索(向量+BM25) → RRF融合 → MMR多样化 → gte-rerank重排序 → RAG生成
 """
 
 import re
-from typing import Any
 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from loguru import logger
 
 from src.core.config import settings
+from src.core.llm_factory import get_llm
 from src.knowledge.vector_store import VectorStore, vector_store
 
 
-# ==================== 停用词表 ====================
+def _track_rerank_usage(total_tokens: int, doc_count: int) -> None:
+    """记录重排序 token 用量到统一统计队列"""
+    try:
+        from src.core.llm_factory import _trace_ctx
+        from src.token.token_callback import _token_queue
 
-_STOP_WORDS: set[str] = {
-    "的", "了", "是", "在", "有", "和", "就", "不", "人", "都",
-    "一", "个", "上", "也", "很", "到", "说", "要", "去", "你",
-    "会", "着", "没有", "看看", "知道", "可以", "这个", "那个",
-    "自己", "因为", "所以", "但是", "如果", "虽然", "而且", "或者",
-    "然后", "已经", "还是", "只是", "不是", "没",
-    "可能", "应该", "能够", "什么", "怎么", "如何", "怎样", "哪个",
-}
+        ctx = _trace_ctx.get()
+        if ctx is None or not ctx.get("trace_id"):
+            return
+        _token_queue.append({
+            "trace_id": ctx["trace_id"],
+            "session_id": ctx.get("session_id", ""),
+            "user_id": ctx.get("user_id", ""),
+            "model_name": "gte-rerank",
+            "input_tokens": total_tokens,
+            "output_tokens": 0,
+            "total_tokens": total_tokens,
+            "intent_type": "RERANK",
+            "call_purpose": f"rerank_{doc_count}_docs",
+            "tool_called": False,
+            "tool_names": "",
+        })
+    except Exception:
+        pass
+
+
+# ==================== 查询简化判断 ====================
+
+# 口语化/自然语言问句模式
+_QUESTION_PATTERNS = re.compile(
+    r"[?？]|什么|怎么|如何|为什么|哪个|哪些|"
+    r"帮我|我想|我要|能不能|可不可以|有没有|"
+    r"请问|麻烦|找一下|查一下|看一下|告诉我"
+)
+
+
+def _is_simple_query(query: str) -> bool:
+    """短查询（≤20字）且无问句/口语模式，跳过 LLM 重写"""
+    return len(query) <= 20 and not _QUESTION_PATTERNS.search(query)
+
+
+# ==================== 中英文混合分词（模块级复用） ====================
+
+
+def _tokenize(text: str) -> list[str]:
+    """中英混合分词：英文单词 + 中文单字 bigram"""
+    tokens: list[str] = []
+    buf = ""
+    for ch in text:
+        if ch.isascii() and ch.isalpha():
+            buf += ch
+        else:
+            if buf:
+                tokens.append(buf.lower())
+                buf = ""
+            if not ch.isspace() and ch.isalnum():
+                tokens.append(ch)
+    if buf:
+        tokens.append(buf.lower())
+    # 中文 bigram
+    zh = [t for t in tokens if not t.isascii()]
+    bigrams = [zh[i] + zh[i + 1] for i in range(len(zh) - 1)]
+    return tokens + bigrams
 
 
 class RetrievalPipeline:
@@ -30,36 +83,26 @@ class RetrievalPipeline:
 
     def __init__(self, vs: VectorStore | None = None) -> None:
         self.vs = vs or vector_store
-        self._llm: ChatOpenAI | None = None
-        self._embeddings: OpenAIEmbeddings | None = None
+        self._llm = None
+        # BM25 索引缓存：{user_id: (doc_count, bm25, docs_list)}
+        self._bm25_cache: dict[str, tuple[int, object, list[dict]]] = {}
 
     @property
-    def llm(self) -> ChatOpenAI:
+    def llm(self):
         if self._llm is None:
-            self._llm = ChatOpenAI(
-                model=settings.MODEL_NAME,
-                api_key=settings.OPENAI_API_KEY,
-                base_url=settings.OPENAI_BASE_URL,
-                temperature=0,
-            )
+            self._llm = get_llm(temperature=0, streaming=False)
         return self._llm
-
-    @property
-    def embeddings(self) -> OpenAIEmbeddings:
-        if self._embeddings is None:
-            self._embeddings = OpenAIEmbeddings(
-                model=settings.EMBEDDING_MODEL,
-                api_key=settings.OPENAI_API_KEY,
-                base_url=settings.OPENAI_BASE_URL,
-            )
-        return self._embeddings
 
     # ==================== 步骤 1: 查询重写 ====================
 
     async def _rewrite_query(self, query: str) -> str:
-        """LLM 优化查询：去除口语化，提取核心关键词"""
+        """LLM 优化查询：去除口语化，提取核心关键词（短查询/纯关键词跳过）"""
         if not settings.QUERY_REWRITING_ENABLED:
             return query
+        if _is_simple_query(query):
+            return query
+        from src.core.llm_factory import update_trace_context
+        update_trace_context(intent_type="QUERY_REWRITE")
         try:
             prompt = (
                 "你是一个搜索查询优化助手。请分析用户的原始查询，将其重写为更适合向量检索的搜索查询。\n"
@@ -80,47 +123,43 @@ class RetrievalPipeline:
 
     # ==================== 步骤 2: 混合检索 ====================
 
-    def _calculate_threshold(self, query: str) -> float:
-        """动态相似度阈值"""
-        if not settings.DYNAMIC_THRESHOLD_ENABLED:
-            return settings.SIMILARITY_THRESHOLD_BASE
-        q_len = len(query)
-        if q_len > 100:
-            return min(0.6, settings.SIMILARITY_THRESHOLD_BASE + 0.4)
-        elif q_len > 50:
-            return min(0.55, settings.SIMILARITY_THRESHOLD_BASE + 0.3)
-        elif q_len > 20:
-            return min(0.5, settings.SIMILARITY_THRESHOLD_BASE + 0.2)
-        else:
-            return max(0.15, settings.SIMILARITY_THRESHOLD_BASE - 0.02)
+    def _get_or_build_bm25(self, user_id: str) -> tuple[object, list[dict]]:
+        """获取 BM25 索引（惰性缓存：文档数变化时自动重建）"""
+        from rank_bm25 import BM25Okapi
+
+        current_count = self.vs.count(user_id)
+        cached = self._bm25_cache.get(user_id)
+        if cached and cached[0] == current_count:
+            return cached[1], cached[2]
+
+        # 缓存失效或首次：重建索引
+        docs = self.vs.get_all_docs(user_id)
+        if not docs:
+            self._bm25_cache[user_id] = (0, None, [])
+            return None, []
+
+        corpus = [_tokenize(d["text"]) for d in docs]
+        bm25 = BM25Okapi(corpus)
+        self._bm25_cache[user_id] = (current_count, bm25, docs)
+        return bm25, docs
+
+    def invalidate_bm25(self, user_id: str) -> None:
+        """文档变更后主动失效 BM25 缓存"""
+        self._bm25_cache.pop(user_id, None)
 
     def _keyword_search(self, query: str, user_id: str, top_k: int) -> list[dict]:
-        """关键词检索（模拟 FTS，基于 metadata 过滤 + 文本关键词匹配）"""
-        keywords = self._extract_keywords(query)
-        if not keywords:
+        """BM25 稀疏检索（惰性缓存索引，零嵌入调用）"""
+        bm25, docs = self._get_or_build_bm25(user_id)
+        if not bm25 or not docs:
             return []
 
-        # 用每个关键词分别检索，合并结果
-        results: list[dict] = []
-        seen: set[str] = set()
-        for kw in keywords.split():
-            for doc in self.vs.search(user_id, kw, top_k):
-                text = doc["text"]
-                key = str(hash(text))
-                if key not in seen:
-                    seen.add(key)
-                    results.append(doc)
-        return results[:top_k]
+        scores = bm25.get_scores(_tokenize(query))
 
-    @staticmethod
-    def _extract_keywords(query: str) -> str:
-        """提取 FTS 关键词（过滤停用词）"""
-        cleaned = re.sub(r"(?i)(帮我|我想|我要|请问|有没有|给我|找一下|查一下|看一下)", " ", query)
-        cleaned = re.sub(r"[^\u4e00-\u9fa5a-zA-Z0-9\s]", " ", cleaned)
-        words = cleaned.split()
-        meaningful = [w for w in words if len(w) >= 2 and w not in _STOP_WORDS]
-        result = " ".join(meaningful).strip()
-        return result if len(result) >= 2 else ""
+        ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
+        return [
+            {"text": d["text"], "metadata": d["metadata"], "distance": float(s)}
+            for s, d in ranked[:top_k] if s > 0
+        ]
 
     def _hybrid_search(self, query: str, user_id: str, top_k: int) -> list[dict]:
         """混合检索：向量 + 关键词"""
@@ -190,56 +229,74 @@ class RetrievalPipeline:
 
     @staticmethod
     def _jaccard_similarity(text1: str, text2: str) -> float:
-        """n-gram Jaccard 相似度"""
-        n = 3
-        s1 = text1[:200]
-        s2 = text2[:200]
-        grams1 = {s1[i : i + n] for i in range(len(s1) - n + 1)}
-        grams2 = {s2[i : i + n] for i in range(len(s2) - n + 1)}
-        if not grams1 or not grams2:
+        """分词级 Jaccard 相似度（jieba 中文分词 + 空格英文分词）"""
+        import jieba
+
+        def _word_tokenize(text: str) -> set[str]:
+            # 中文用 jieba 分词，英文/数字保持原样
+            tokens: set[str] = set()
+            buf = ""
+            for ch in text[:200]:
+                if ch.isascii() and (ch.isalpha() or ch.isdigit()):
+                    buf += ch
+                else:
+                    if buf:
+                        tokens.add(buf.lower())
+                        buf = ""
+                    if not ch.isspace():
+                        # jieba 切单个中文词
+                        for word in jieba.cut(ch):
+                            word = word.strip()
+                            if word:
+                                tokens.add(word)
+            if buf:
+                tokens.add(buf.lower())
+            return tokens
+
+        tokens1 = _word_tokenize(text1)
+        tokens2 = _word_tokenize(text2)
+        if not tokens1 or not tokens2:
             return 0.0
-        intersection = grams1 & grams2
-        union = grams1 | grams2
+        intersection = tokens1 & tokens2
+        union = tokens1 | tokens2
         return len(intersection) / len(union)
 
-    # ==================== 步骤 5: LLM 重排序 ====================
+    # ==================== 步骤 5: 重排序（gte-rerank） ====================
 
     async def _rerank(self, docs: list[dict], query: str, top_k: int) -> list[dict]:
-        """LLM 重排序（>5 个结果时触发）"""
+        """gte-rerank 专用重排序模型（比 LLM 更快更便宜）"""
         if not settings.RE_RANKING_ENABLED or len(docs) <= settings.RE_RANK_THRESHOLD:
             return docs[:top_k]
 
         try:
-            sb = "请根据与用户查询的相关性，对以下知识片段进行排序。\n"
-            sb += "只输出片段编号的排列顺序（从最相关到最不相关），以英文逗号分隔，不要解释。\n\n"
-            sb += f"用户查询：{query}\n\n"
-            for i, doc in enumerate(docs):
-                text = doc["text"][:200]
-                sb += f"片段{i + 1}：{text}\n\n"
-            sb += "请输出排序后的片段编号（逗号分隔，如：3,1,5,2,4）："
+            from dashscope import TextReRank
 
-            result = await self.llm.ainvoke(sb)
-            content = result.content
-            if not content or not isinstance(content, str):
+            texts = [doc["text"][:500] for doc in docs]  # gte-rerank 最大 8192 tokens
+            response = TextReRank.call(
+                model="gte-rerank",
+                query=query,
+                documents=texts,
+                top_n=top_k,
+                api_key=settings.OPENAI_API_KEY,
+            )
+
+            if response.status_code != 200:
+                logger.warning(f"重排序失败: {response.code} {response.message}")
                 return docs[:top_k]
 
-            indices: list[int] = []
-            for part in re.split(r"[,\s]+", content.strip()):
-                try:
-                    idx = int(part) - 1
-                    if 0 <= idx < len(docs) and idx not in indices:
-                        indices.append(idx)
-                except ValueError:
-                    pass
+            # 记录 token 用量
+            usage = getattr(response, "usage", None)
+            if usage and usage.total_tokens:
+                _track_rerank_usage(usage.total_tokens, len(docs))
 
-            if len(indices) < min(3, len(docs)):
+            results = response.output.results if response.output else []
+            if not results:
                 return docs[:top_k]
 
-            reranked = [docs[i] for i in indices]
-            remaining = [d for i, d in enumerate(docs) if i not in set(indices)]
-            reranked.extend(remaining)
+            reranked = [docs[r.index] for r in results if r.index < len(docs)]
             return reranked[:top_k]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"重排序异常: {e}")
             return docs[:top_k]
 
     # ==================== 步骤 6: RAG 生成 ====================
@@ -248,25 +305,33 @@ class RetrievalPipeline:
         """基于检索结果生成 RAG 回答"""
         if not docs:
             return "抱歉，知识库中未找到相关信息。"
+        from src.core.llm_factory import update_trace_context
+        update_trace_context(intent_type="RAG_GENERATE")
 
         context = "基于以下知识片段回答问题：\n\n"
         for i, doc in enumerate(docs):
-            context += f"片段 {i + 1}: {doc['text']}\n\n"
-
-        prompt = f"""请根据以下知识片段回答问题。请遵循以下要求：
-1. 如果知识片段中没有相关信息，请明确说明"根据已有知识无法回答"
-2. 如果知识片段中有相关信息，请引用具体的片段编号（例如：根据片段1、片段3）
-3. 请以自然、流畅的语言组织回答，不要直接复制片段内容
-4. 如果信息不完全匹配或存在不确定性，请说明
-
-问题：{query}
-
-{context}
-
-请给出准确、简洁的回答（可引用片段编号）："""
+            section = doc.get("metadata", {}).get("section", "")
+            label = f"片段 {i + 1}" + (f"（章节：{section}）" if section else "")
+            context += f"{label}: {doc['text']}\n\n"
 
         try:
-            result = await self.llm.ainvoke(prompt)
+            from langchain_core.messages import SystemMessage, HumanMessage
+
+            result = await self.llm.ainvoke([
+                SystemMessage(content=(
+                    "你是严格的文档问答助手。你的所有回答必须100%基于用户提供的知识片段。\n\n"
+                    "核心规则：\n"
+                    "1. 只能使用知识片段中明确写出的信息，禁止使用训练数据或常识补充\n"
+                    "2. 如果片段中没有相关信息，直接回复\"根据已有知识无法回答\"，不要猜测或延伸\n"
+                    "3. 引用时标注片段编号（如：根据片段1、片段3）\n"
+                    "4. 回答保持简洁，不要展开片段中没有的内容"
+                )),
+                HumanMessage(content=(
+                    f"问题：{query}\n\n"
+                    f"{context}\n\n"
+                    "请严格基于以上片段回答，不要添加任何额外信息。"
+                )),
+            ])
             return str(result.content) if result.content else "生成答案时发生错误。"
         except Exception:
             return "生成答案时发生错误，请稍后重试。"

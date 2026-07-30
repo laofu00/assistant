@@ -80,8 +80,15 @@ class Settings(BaseSettings):
     AGENT_CIRCUIT_BREAKER_TIMEOUT: int = 60
 
     # ==================== 文件上传 ====================
+    UPLOAD_DIR: str = "data/uploads"
     MAX_FILE_SIZE: int = 20_971_520  # 20MB
     ALLOWED_EXTENSIONS: str = "txt,pdf,doc,docx,xls,xlsx"
+
+    @property
+    def upload_dir(self) -> Path:
+        """上传文件存储绝对路径（Docker 部署时应挂载为 volume）"""
+        p = Path(self.UPLOAD_DIR)
+        return p if p.is_absolute() else self.PROJECT_ROOT / p
 
     # ==================== 检索 ====================
     HYBRID_SEARCH_ENABLED: bool = True
@@ -89,7 +96,7 @@ class Settings(BaseSettings):
     FTS_CANDIDATE_MULTIPLIER: int = 2
     RRF_CONSTANT_K: int = 30
     RE_RANKING_ENABLED: bool = True
-    RE_RANK_THRESHOLD: int = 5
+    RE_RANK_THRESHOLD: int = 10
     MMR_ENABLED: bool = True
     MMR_LAMBDA: float = 0.7
     QUERY_REWRITING_ENABLED: bool = True

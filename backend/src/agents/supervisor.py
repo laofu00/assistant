@@ -7,10 +7,9 @@ import json
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_community.chat_models.tongyi import ChatTongyi
 from loguru import logger
 
-from src.core.config import settings
+from src.core.llm_factory import get_llm, update_trace_context
 from src.models.state import AgentState
 
 SUPERVISOR_PROMPT = """你是一个智能路由助手。请分析用户的消息，判断其意图类别。
@@ -53,14 +52,11 @@ SUPERVISOR_PROMPT = """你是一个智能路由助手。请分析用户的消息
 
 def create_supervisor_node():
     """创建 Supervisor 意图分类节点"""
-    llm = ChatTongyi(
-        model=settings.MODEL_NAME,
-        dashscope_api_key=settings.OPENAI_API_KEY,
-        temperature=0,  # 分类任务不可变性
-    )
+    llm = get_llm(temperature=0, streaming=False)
 
     async def supervisor_node(state: AgentState) -> dict:
         """分析用户意图，返回分类结果"""
+        update_trace_context(intent_type="SUPERVISOR", call_purpose="intent_classify")
         messages = state["messages"]
         if not messages:
             return {"intent": "general"}
@@ -78,7 +74,7 @@ def create_supervisor_node():
         is_candidate = any(kw in str(content) for kw in candidate_keywords)
 
         if not is_fast_match:
-            logger.debug(f"Supervisor 快速分类: general（无匹配关键词）")
+            logger.debug("Supervisor 快速分类: general（无匹配关键词）")
             return {"intent": "general"}
 
         # 有匹配关键词时才调用 LLM 精确分类

@@ -14,12 +14,12 @@ from langgraph.graph import END, StateGraph
 from loguru import logger
 
 from src.agents.supervisor import create_supervisor_node
-from src.core.memory import sanitize_output, smart_memory
+from src.core.llm_factory import set_trace_context
+from src.core.memory import smart_memory
 from src.models.state import AgentState
 from src.token.quota import quota_checker
 from src.workflows.match_workflow import match_app
 from src.workflows.react_workflow import react_app
-
 
 # ==================== 节点 ====================
 
@@ -60,17 +60,29 @@ async def _match_subgraph(state: AgentState) -> dict:
     """匹配子图：简历匹配"""
     logger.info(f"路由到匹配工作流, user={state.get('user_id')}, resume={state.get('resume_filename')}")
 
-    # 如果还没有 resume_filename 和 jd_text，尝试从消息中提取
-    if not state.get("resume_filename") and not state.get("jd_text"):
-        messages = state.get("messages", [])
-        for m in reversed(messages):
-            content = m.content if hasattr(m, "content") else str(m)
-            if "简历" in str(content) or "resume" in str(content).lower():
-                # 提示用户提供
-                return {
-                    "messages": messages + [AIMessage(content="请提供以下信息：\n1. 简历文件名（已上传到知识库的文件名）\n2. JD文本内容（直接粘贴或提供文件名）")],
-                    "match_report": None,
-                }
+    # 入口参数校验：简历和 JD 缺一不可
+    messages = list(state.get("messages", []))
+    missing_resume = not state.get("resume_filename")
+    missing_jd = not state.get("jd_text") or len((state.get("jd_text") or "").strip()) < 10
+
+    if missing_resume and missing_jd:
+        prompt = "要进行岗位匹配分析，请提供以下信息：\n1. 简历文件名（需先上传到知识库）\n2. JD文本内容（直接粘贴或提供文件名）"
+        return {
+            "messages": messages + [AIMessage(content=prompt)],
+            "match_report": prompt,
+        }
+    if missing_resume:
+        prompt = "请提供简历文件名（已上传到知识库的文件名），例如：my_resume.pdf"
+        return {
+            "messages": messages + [AIMessage(content=prompt)],
+            "match_report": prompt,
+        }
+    if missing_jd:
+        prompt = "请提供 JD 文本内容（直接粘贴或提供已上传到知识库的文件名）"
+        return {
+            "messages": messages + [AIMessage(content=prompt)],
+            "match_report": prompt,
+        }
 
     result = await match_app.ainvoke(state)
 
@@ -82,10 +94,6 @@ async def _match_subgraph(state: AgentState) -> dict:
 
     return {"messages": messages, "match_report": report, "final_score": result.get("final_score")}
 
-
-async def _capture_token_node(state: AgentState) -> dict:
-    """Token 捕获（由 TokenCaptureCallback 在 LLM 调用时实时写入）"""
-    return {}
 
 
 # ==================== 路由 ====================
@@ -120,14 +128,12 @@ def create_supervisor_workflow() -> StateGraph:
     workflow.add_node("supervisor", _supervisor_node)
     workflow.add_node("react_subgraph", _react_subgraph)
     workflow.add_node("match_subgraph", _match_subgraph)
-    workflow.add_node("capture_token", _capture_token_node)
 
     workflow.set_entry_point("quota_check")
     workflow.add_conditional_edges("quota_check", _check_quota_error, {"supervisor": "supervisor", "__end__": END})
     workflow.add_conditional_edges("supervisor", _supervisor_router, {"react_subgraph": "react_subgraph", "match_subgraph": "match_subgraph"})
-    workflow.add_edge("react_subgraph", "capture_token")
-    workflow.add_edge("match_subgraph", "capture_token")
-    workflow.add_edge("capture_token", END)
+    workflow.add_edge("react_subgraph", END)
+    workflow.add_edge("match_subgraph", END)
 
     return workflow
 
@@ -156,6 +162,12 @@ async def run_chat(
     """
     sid = session_id or f"session_{uuid.uuid4().hex[:8]}"
     trace_id = uuid.uuid4().hex
+
+    set_trace_context(
+        trace_id=trace_id,
+        session_id=sid,
+        user_id=user_id,
+    )
 
     initial_state: AgentState = {
         "messages": [HumanMessage(content=message)],

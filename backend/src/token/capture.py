@@ -3,15 +3,13 @@
 对齐 Java 版 TokenCaptureService：captureSyncCall / captureStreamCall
 """
 
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from loguru import logger
 
-from src.core.config import settings
 from src.core.database import async_session_factory
 from src.models.token_usage import TokenUsage
-from src.token.cost import CostCalculator, cost_calculator
+from src.token.cost import cost_calculator
 from src.token.dead_letter import dead_letter
 
 
@@ -20,7 +18,7 @@ def _infer_provider(model_name: str | None) -> str:
     if not model_name:
         return "unknown"
     lower = model_name.lower()
-    if any(k in lower for k in ("qwen", "dashscope", "tongyi")):
+    if any(k in lower for k in ("qwen", "dashscope", "tongyi", "text-embedding", "gte-rerank")):
         return "dashscope"
     if "gpt" in lower or "openai" in lower:
         return "openai"
@@ -81,7 +79,7 @@ async def capture_tokens(
         tool_duration_ms=tool_duration_ms,
         query_text=query_text[:500] if query_text else "",
         response_length=response_length,
-        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        created_at=datetime.now(UTC).replace(tzinfo=None),
     )
 
     try:
@@ -102,29 +100,8 @@ async def capture_tokens(
                 "total_tokens": total,
                 "cost_amount": float(cost),
                 "intent_type": intent_type,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             })
         except Exception as dl_e:
             logger.error(f"死信队列写入也失败: {dl_e}")
 
-
-def aggregate_stream_usage(chunks: list[Any]) -> dict[str, int]:
-    """从流式 chunks 中聚合 Token 用量
-
-    Args:
-        chunks: langchain AIMessageChunk 列表
-
-    Returns:
-        {"input_tokens": N, "output_tokens": N, "total_tokens": N}
-    """
-    usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    for chunk in reversed(chunks):
-        meta = getattr(chunk, "response_metadata", {}) or {}
-        token_usage = meta.get("token_usage", {}) or meta.get("usage", {}) or {}
-        if token_usage:
-            usage["input_tokens"] = max(usage["input_tokens"], token_usage.get("prompt_tokens", 0) or token_usage.get("input_tokens", 0))
-            usage["output_tokens"] = max(usage["output_tokens"], token_usage.get("completion_tokens", 0) or token_usage.get("output_tokens", 0))
-            usage["total_tokens"] = max(usage["total_tokens"], token_usage.get("total_tokens", 0))
-            if usage["total_tokens"] > 0:
-                break
-    return usage

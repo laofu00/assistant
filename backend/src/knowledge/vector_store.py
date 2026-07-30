@@ -1,13 +1,20 @@
 """ChromaDB 向量存储封装 — CRUD + 按用户隔离，使用 API 向量化"""
 
+import asyncio
 from datetime import datetime, timezone
 
 import chromadb
 from chromadb.api import ClientAPI
-from chromadb.api.types import EmbeddingFunction, Metadata
-from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+from loguru import logger
 
 from src.core.config import settings
+from src.knowledge.embedding_tracker import TrackedEmbeddingFunction
+
+# 嵌入 API 批次大小
+_EMBED_BATCH_SIZE = 20
+# 指数退避配置
+_MAX_RETRIES = 3
+_BASE_DELAY = 2.0  # 秒
 
 
 class VectorStore:
@@ -28,11 +35,7 @@ class VectorStore:
             self._client: ClientAPI = chromadb.PersistentClient(
                 path=persist_dir or settings.chroma_path,
             )
-        self._ef = OpenAIEmbeddingFunction(
-            api_key=settings.OPENAI_API_KEY or "sk-placeholder",
-            api_base=settings.OPENAI_BASE_URL,
-            model_name=settings.EMBEDDING_MODEL,
-        )
+        self._ef = TrackedEmbeddingFunction()
 
     def _collection_name(self, user_id: str) -> str:
         return f"knowledge_{user_id}"
@@ -43,23 +46,92 @@ class VectorStore:
             embedding_function=self._ef,
         )
 
-    def add_documents(
+    async def add_documents(
         self,
         user_id: str,
         texts: list[str],
         metadata_list: list[dict] | None = None,
         ids: list[str] | None = None,
     ) -> None:
-        """批量添加文档向量"""
+        """批量添加文档向量（分批 + 指数退避重试，避免 API 限流）"""
         collection = self._get_collection(user_id)
         metadatas = metadata_list or [{}] * len(texts)
         doc_ids = ids or [f"{user_id}_{i}_{datetime.now(timezone.utc).timestamp()}" for i in range(len(texts))]
 
-        collection.add(
-            documents=texts,
-            metadatas=metadatas,
-            ids=doc_ids,
-        )
+        total = len(texts)
+        for start in range(0, total, _EMBED_BATCH_SIZE):
+            end = min(start + _EMBED_BATCH_SIZE, total)
+            batch = (start // _EMBED_BATCH_SIZE) + 1
+            total_batches = (total + _EMBED_BATCH_SIZE - 1) // _EMBED_BATCH_SIZE
+
+            for attempt in range(1, _MAX_RETRIES + 1):
+                try:
+                    collection.add(
+                        documents=texts[start:end],
+                        metadatas=metadatas[start:end],
+                        ids=doc_ids[start:end],
+                    )
+                    logger.debug(f"向量化批次 {batch}/{total_batches} 完成 ({end - start} chunks)")
+                    break
+                except Exception as e:
+                    if attempt == _MAX_RETRIES:
+                        logger.error(f"向量化批次 {batch} 失败（已重试 {_MAX_RETRIES} 次）: {e}")
+                        raise
+                    delay = _BASE_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"向量化批次 {batch} 失败 (尝试 {attempt}/{_MAX_RETRIES})，{delay:.0f}s 后重试: {e}"
+                    )
+                    await asyncio.sleep(delay)
+
+    @staticmethod
+    def _with_active(where: dict | None = None) -> dict:
+        """组合 active=1 过滤条件"""
+        active_filter = {"active": 1}
+        if where is None:
+            return active_filter
+        return {"$and": [where, active_filter]}
+
+    def deactivate_by_filename(self, user_id: str, filename: str) -> int:
+        """将指定文件的所有 chunk 标记为 inactive（不重新嵌入）"""
+        collection = self._get_collection(user_id)
+        results = collection.get(where={"source": filename}, include=["metadatas"])
+        ids = results.get("ids", [])
+        if not ids:
+            return 0
+        new_metas = []
+        for meta in (results["metadatas"] or []):
+            m = dict(meta) if meta else {}
+            m["active"] = 0
+            new_metas.append(m)
+        collection.update(ids=ids, metadatas=new_metas)
+        logger.debug(f"软删除 {len(ids)} 个 chunk: {filename}")
+        return len(ids)
+
+    def deactivate_by_file_id(self, user_id: str, file_id: str) -> int:
+        """按 file_id 将 chunk 标记为 inactive"""
+        collection = self._get_collection(user_id)
+        results = collection.get(where={"file_id": file_id}, include=["metadatas"])
+        ids = results.get("ids", [])
+        if not ids:
+            return 0
+        new_metas = []
+        for meta in (results["metadatas"] or []):
+            m = dict(meta) if meta else {}
+            m["active"] = 0
+            new_metas.append(m)
+        collection.update(ids=ids, metadatas=new_metas)
+        return len(ids)
+
+    def get_all_docs(self, user_id: str) -> list[dict]:
+        """获取用户全部活跃文档（不触发嵌入）"""
+        collection = self._get_collection(user_id)
+        results = collection.get(where={"active": 1}, include=["documents", "metadatas"])
+        if not results["documents"]:
+            return []
+        return [
+            {"text": doc, "metadata": meta}
+            for doc, meta in zip(results["documents"], results["metadatas"] or [{}] * len(results["documents"]))
+        ]
 
     def search(
         self,
@@ -73,7 +145,7 @@ class VectorStore:
         results = collection.query(
             query_texts=[query],
             n_results=top_k,
-            where=where,
+            where=self._with_active(where),
         )
         if not results["documents"] or not results["documents"][0]:
             return []
@@ -92,10 +164,10 @@ class VectorStore:
         ]
 
     def get_by_filename(self, user_id: str, filename: str) -> list[dict]:
-        """按文件名获取所有 chunk（按 chunk_index 排序）"""
+        """按文件名获取活跃 chunk（按 chunk_index 排序）"""
         collection = self._get_collection(user_id)
         results = collection.get(
-            where={"source": filename},
+            where={"$and": [{"source": filename}, {"active": 1}]},
             include=["documents", "metadatas"],
         )
         if not results["documents"]:
@@ -112,9 +184,9 @@ class VectorStore:
         return items
 
     def list_filenames(self, user_id: str) -> list[str]:
-        """列出用户所有不重复文件名"""
+        """列出用户所有活跃文件"""
         collection = self._get_collection(user_id)
-        results = collection.get(include=["metadatas"])
+        results = collection.get(where={"active": 1}, include=["metadatas"])
         if not results["metadatas"]:
             return []
 
@@ -143,9 +215,10 @@ class VectorStore:
         return len(ids)
 
     def count(self, user_id: str) -> int:
-        """获取用户文档总数"""
+        """获取用户活跃文档总数"""
         collection = self._get_collection(user_id)
-        return collection.count()
+        results = collection.get(where={"active": 1}, include=[])
+        return len(results.get("ids", []))
 
 
 # 全局实例
