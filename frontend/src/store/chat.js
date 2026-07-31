@@ -2,22 +2,41 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { formatDateTime } from '../utils/dateUtils.js'
 
+function makeSessionId() {
+  return 'session_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7)
+}
+
 export const useChatStore = defineStore('chat', () => {
-  // 从localStorage加载历史消息，如果存在的话
-  const loadMessagesFromStorage = () => {
+  // 当前会话 ID
+  const currentSessionId = ref(localStorage.getItem('chat_current_session') || '')
+
+  // 会话列表 [{id, title, time, messageCount}]
+  const sessionList = ref(loadSessionList())
+
+  // 从 localStorage 加载会话列表
+  function loadSessionList() {
     try {
-      const saved = localStorage.getItem('chat_messages')
-      if (saved) {
-        return JSON.parse(saved)
-      }
-    } catch (error) {
-      console.error('Failed to load chat messages from localStorage:', error)
-    }
-    return null
+      const saved = localStorage.getItem('chat_sessions')
+      return saved ? JSON.parse(saved) : []
+    } catch { return [] }
   }
 
-  // 消息列表
-  const messages = ref(loadMessagesFromStorage() || [])
+  function saveSessionList() {
+    localStorage.setItem('chat_sessions', JSON.stringify(sessionList.value))
+  }
+
+  // 从 localStorage 加载当前会话的消息
+  function loadCurrentMessages() {
+    if (!currentSessionId.value) return []
+    try {
+      const saved = localStorage.getItem('chat_msgs_' + currentSessionId.value)
+      if (saved) return JSON.parse(saved)
+    } catch { return [] }
+    return []
+  }
+
+  // 消息列表（会话隔离）
+  const messages = ref(loadCurrentMessages())
 
   // 是否正在加载
   const loading = ref(false)
@@ -55,12 +74,77 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 保存消息到localStorage
+  // 保存消息到 localStorage（按会话隔离）
   const saveMessagesToStorage = () => {
+    if (!currentSessionId.value) return
     try {
-      localStorage.setItem('chat_messages', JSON.stringify(messages.value))
-    } catch (error) {
-      console.error('Failed to save chat messages to localStorage:', error)
+      localStorage.setItem('chat_msgs_' + currentSessionId.value, JSON.stringify(messages.value))
+      // 更新会话列表的标题和消息数
+      updateSessionMeta()
+    } catch { /* ignore */ }
+  }
+
+  // 更新会话列表中的元信息
+  function updateSessionMeta() {
+    const idx = sessionList.value.findIndex(s => s.id === currentSessionId.value)
+    if (idx >= 0) {
+      const userMsgs = messages.value.filter(m => m.role === 'user')
+      sessionList.value[idx].messageCount = messages.value.length
+      sessionList.value[idx].time = new Date().toISOString()
+      // 首次有用户消息时自动命名，已有名称不变
+      if (userMsgs.length === 1 && sessionList.value[idx].title === '新会话') {
+        sessionList.value[idx].title = (userMsgs[0].content || '').substring(0, 20)
+      }
+      saveSessionList()
+    }
+  }
+
+  // 创建新会话
+  let _sessionCounter = sessionList.value.length
+  const createSession = () => {
+    _sessionCounter++
+    const id = makeSessionId()
+    const title = `新会话 ${_sessionCounter}`
+    sessionList.value.unshift({ id, title, time: new Date().toISOString(), messageCount: 0 })
+    saveSessionList()
+    switchSession(id)
+  }
+
+  // 重命名会话
+  const renameSession = (sessionId, newTitle) => {
+    const idx = sessionList.value.findIndex(s => s.id === sessionId)
+    if (idx >= 0 && newTitle.trim()) {
+      sessionList.value[idx].title = newTitle.trim().substring(0, 30)
+      saveSessionList()
+    }
+  }
+
+  // 切换会话
+  const switchSession = (sessionId) => {
+    // 保存当前会话消息
+    if (currentSessionId.value) {
+      localStorage.setItem('chat_msgs_' + currentSessionId.value, JSON.stringify(messages.value))
+    }
+    // 切换到新会话
+    currentSessionId.value = sessionId
+    localStorage.setItem('chat_current_session', sessionId)
+    // 加载新会话消息
+    const saved = localStorage.getItem('chat_msgs_' + sessionId)
+    messages.value = saved ? JSON.parse(saved) : []
+    if (messages.value.length === 0) initWelcomeMessage()
+  }
+
+  // 删除会话
+  const deleteSession = (sessionId) => {
+    sessionList.value = sessionList.value.filter(s => s.id !== sessionId)
+    saveSessionList()
+    localStorage.removeItem('chat_msgs_' + sessionId)
+    if (currentSessionId.value === sessionId) {
+      if (sessionList.value.length > 0) {
+        switchSession(sessionList.value[0].id)
+      } else {
+        createSession()
+      }
     }
   }
 
@@ -325,7 +409,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 清空对话
+  // 清空当前会话
   const clearMessages = () => {
     messages.value = []
     saveMessagesToStorage()
@@ -357,7 +441,13 @@ export const useChatStore = defineStore('chat', () => {
     messages: messageList,
     loading: isLoading,
     inputMessage: currentInputMessage,
-    streamingMessageIndex: currentStreamingMessageIndex, // 调试用
+    streamingMessageIndex: currentStreamingMessageIndex,
+    currentSessionId,
+    sessionList,
+    createSession,
+    switchSession,
+    deleteSession,
+    renameSession,
     initWelcomeMessage,
     addUserMessage,
     addAiMessage,

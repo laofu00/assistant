@@ -1,5 +1,34 @@
 <template>
   <div class="chat-page">
+    <!-- 会话侧边栏 -->
+    <aside class="session-sidebar">
+      <div class="session-sidebar-header">
+        <span>对话</span>
+        <el-button size="small" text @click="handleNewSession" title="新建会话">
+          <el-icon><Plus /></el-icon>
+        </el-button>
+      </div>
+      <div class="session-sidebar-list">
+        <div
+          v-for="s in sessionList"
+          :key="s.id"
+          :class="['session-sidebar-item', { active: chatStore.currentSessionId === s.id }]"
+          @click="handleSessionClick(s.id)"
+        >
+          <span class="session-sidebar-title" :title="s.title">{{ s.title }}</span>
+          <el-dropdown trigger="click" @command="(cmd) => handleSessionCmd(cmd, s)">
+            <el-icon class="session-more-icon"><MoreFilled /></el-icon>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </div>
+    </aside>
+
     <div class="chat-container">
       <!-- 消息列表 -->
       <div class="chat-messages" ref="messagesContainer">
@@ -128,9 +157,10 @@
 import { ref, onMounted, nextTick, computed, reactive } from 'vue'
 import { chatApi } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Loading, DocumentCopy } from '@element-plus/icons-vue'
+import { Loading, DocumentCopy, Plus, MoreFilled } from '@element-plus/icons-vue'
 import { useChatStore } from '../store/chat'
 import { useUserStore } from '../store/user'
+import { listSessions, setSessionTitle, clearSession } from '../api/toolManagement'
 import router from '../router'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
@@ -154,7 +184,57 @@ const chatStore = useChatStore()
 const userStore = useUserStore()
 const messagesContainer = ref(null)
 const thinkingText = ref('正在思考...')
-const collapsedSteps = reactive({})  // 追踪哪些消息的步骤被收起
+const collapsedSteps = reactive({})
+
+// 会话管理
+const sessionList = computed(() => chatStore.sessionList)
+const handleNewSession = () => chatStore.createSession()
+const handleSessionClick = (id) => chatStore.switchSession(id)
+const handleSessionCmd = async (cmd, session) => {
+  if (cmd === 'delete') {
+    try {
+      await ElMessageBox.confirm('删除会话将清除所有对话记录，不可恢复。', '确认删除', { type: 'warning' })
+      chatStore.deleteSession(session.id)
+      clearSession(session.id).catch(e => console.warn('Redis 会话清理失败:', e))
+    } catch { /* cancelled */ }
+  } else if (cmd === 'rename') {
+    try {
+      const { value } = await ElMessageBox.prompt('请输入新名称', '重命名', {
+        inputValue: session.title,
+        inputPattern: /\S+/,
+        inputErrorMessage: '名称不能为空'
+      })
+      if (value) {
+        chatStore.renameSession(session.id, value)
+        setSessionTitle(session.id, value).catch(() => {})  // 同步到服务端
+      }
+    } catch { /* cancelled */ }
+  }
+}
+
+// 从服务端恢复会话列表（防止 localStorage 清缓存丢失）
+async function restoreFromServer() {
+  try {
+    const res = await listSessions({})
+    if (res.code === 0 && res.data?.length > 0) {
+      for (const s of res.data) {
+        const existing = chatStore.sessionList.find(l => l.id === s.session_id)
+        if (!existing) {
+          chatStore.sessionList.push({
+            id: s.session_id,
+            title: s.title || '新会话',
+            time: s.created_at || new Date().toISOString(),
+            messageCount: s.message_count || 0,
+          })
+        } else if (s.title && existing.title === '新会话') {
+          existing.title = s.title  // 用服务端标题覆盖默认标题
+        }
+      }
+      // 持久化
+      localStorage.setItem('chat_sessions', JSON.stringify(chatStore.sessionList))
+    }
+  } catch { /* 服务端不可用时使用本地数据 */ }
+}
 
 const toggleStep = (msgIdx) => {
   collapsedSteps[msgIdx] = !collapsedSteps[msgIdx]
@@ -254,8 +334,11 @@ const sendMessage = async () => {
   scrollToBottom()
 
   try {
+    const sid = chatStore.currentSessionId
+
     await chatApi.sendMessageStream(
       message,
+      sid,
       // 流式块回调
       (chunk) => {
         thinkingText.value = '正在输出...'
@@ -333,8 +416,17 @@ const clearChat = async () => {
   }
 }
 
-onMounted(() => {
-  chatStore.initWelcomeMessage()
+onMounted(async () => {
+  // 只在 localStorage 无数据时才从服务端恢复
+  if (chatStore.sessionList.length === 0) {
+    await restoreFromServer()
+  }
+  if (!chatStore.currentSessionId || chatStore.sessionList.length === 0) {
+    chatStore.createSession()
+  }
+  if (chatStore.messages.length === 0) {
+    chatStore.initWelcomeMessage()
+  }
   scrollToBottom()
 })
 </script>
@@ -343,13 +435,76 @@ onMounted(() => {
 .chat-page {
   height: 100%;
   display: flex;
-  flex-direction: column;
 }
+
+/* 会话侧边栏 */
+.session-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: #f5f6f8;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e8eaed;
+}
+
+.session-sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 14px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #606266;
+  flex-shrink: 0;
+}
+
+.session-sidebar-header .el-button {
+  color: #909399;
+  padding: 4px;
+}
+
+.session-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.session-sidebar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  color: #606266;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.session-sidebar-item:hover { background: #e8eaef; }
+.session-sidebar-item.active { background: #dce6f5; color: #303133; font-weight: 500; }
+
+.session-sidebar-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-more-icon {
+  flex-shrink: 0;
+  opacity: 0;
+  font-size: 14px;
+  color: #909399;
+}
+.session-sidebar-item:hover .session-more-icon { opacity: 0.7; }
 
 .chat-container {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 /* ─── 消息列表 ─── */

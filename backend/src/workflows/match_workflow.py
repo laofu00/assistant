@@ -4,6 +4,7 @@
 三个评估 Agent（tech/exp/risk）通过 LangGraph Send 并行执行，结果逐步反馈前端
 """
 
+import time
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
@@ -21,6 +22,11 @@ from src.agents.match_agents import (
     summarize_results,
 )
 from src.core.llm_factory import set_trace_context, update_trace_context
+from src.core.metrics import (
+    match_agent_duration_seconds,
+    match_score_distribution,
+    match_total,
+)
 from src.knowledge.vector_store import vector_store
 from src.models.state import AgentState
 
@@ -81,11 +87,14 @@ async def _tech_agent_node(state: AgentState) -> dict:
     jd_text = state.get("jd_text", "")
     mode = state.get("match_mode", "recruiter")
     prompt = CANDIDATE_TECH_PROMPT if mode == "candidate" else TECH_MATCH_PROMPT
+    start = time.monotonic()
     try:
         result = await _invoke_agent(prompt, resume_text, jd_text, mode)
+        match_agent_duration_seconds.labels(agent="tech").observe(time.monotonic() - start)
         return {"_tech_result": result}
     except Exception as e:
         logger.error(f"技术评估失败: {e}")
+        match_agent_duration_seconds.labels(agent="tech").observe(time.monotonic() - start)
         return {"_tech_result": {"error": str(e)}}
 
 
@@ -96,11 +105,14 @@ async def _exp_agent_node(state: AgentState) -> dict:
     jd_text = state.get("jd_text", "")
     mode = state.get("match_mode", "recruiter")
     prompt = CANDIDATE_EXP_PROMPT if mode == "candidate" else EXP_MATCH_PROMPT
+    start = time.monotonic()
     try:
         result = await _invoke_agent(prompt, resume_text, jd_text, mode)
+        match_agent_duration_seconds.labels(agent="exp").observe(time.monotonic() - start)
         return {"_exp_result": result}
     except Exception as e:
         logger.error(f"经验评估失败: {e}")
+        match_agent_duration_seconds.labels(agent="exp").observe(time.monotonic() - start)
         return {"_exp_result": {"error": str(e)}}
 
 
@@ -111,11 +123,14 @@ async def _risk_agent_node(state: AgentState) -> dict:
     jd_text = state.get("jd_text", "")
     mode = state.get("match_mode", "recruiter")
     prompt = CANDIDATE_RISK_PROMPT if mode == "candidate" else RISK_ASSESS_PROMPT
+    start = time.monotonic()
     try:
         result = await _invoke_agent(prompt, resume_text, jd_text, mode)
+        match_agent_duration_seconds.labels(agent="risk").observe(time.monotonic() - start)
         return {"_risk_result": result}
     except Exception as e:
         logger.error(f"风险评估失败: {e}")
+        match_agent_duration_seconds.labels(agent="risk").observe(time.monotonic() - start)
         return {"_risk_result": {"error": str(e)}}
 
 
@@ -129,14 +144,12 @@ async def _summarize_node(state: AgentState) -> dict:
 
     # 文档缺失等前置错误：直接返回 _fanout_decision 设置的错误消息
     if tech.get("error") and exp.get("error") and risk.get("error"):
-        error_report = state.get("match_report", "")
-        if error_report:
-            logger.warning("匹配前置条件不满足，返回错误提示")
-            return {
-                "match_report": error_report,
-                "final_score": 0.0,
-                "messages": state.get("messages", []),
-            }
+        match_total.labels(mode=mode, result="error").inc()
+        return {
+            "match_report": state.get("match_report", ""),
+            "final_score": 0.0,
+            "messages": state.get("messages", []),
+        }
 
     tech_score = tech.get("score", 0)
     exp_score = exp.get("score", 0)
@@ -150,6 +163,9 @@ async def _summarize_node(state: AgentState) -> dict:
         risk_score = 0
 
     final = round(float(tech_score) * 0.40 + float(exp_score) * 0.35 + float(risk_score) * 0.25, 1)
+
+    match_total.labels(mode=mode, result="success").inc()
+    match_score_distribution.observe(final)
 
     if mode == "candidate":
         report = summarize_candidate_results(tech, exp, risk, resume_name or "")

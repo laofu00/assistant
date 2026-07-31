@@ -134,13 +134,14 @@ export const chatApi = {
   },
 
   // 流式发送消息（Python 版：POST + SSE）
-  async sendMessageStream(message, onChunk, onComplete, onError, onThinking, onUndo) {
+  async sendMessageStream(message, sessionId, onChunk, onComplete, onError, onThinking, onUndo) {
     try {
       const userId = localStorage.getItem('userId') || 'test'
       const token = localStorage.getItem('token') || ''
       const url = `${api.defaults.baseURL}/chat`
 
-      console.log('sendMessageStream - POST', url)
+      const body = { message, user_id: userId }
+      if (sessionId) body.session_id = sessionId
 
       const headers = {
         'Accept': 'text/event-stream',
@@ -153,7 +154,7 @@ export const chatApi = {
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ message, user_id: userId })
+        body: JSON.stringify(body)
       })
 
       console.log('sendMessageStream - Response status:', response.status)
@@ -254,8 +255,8 @@ export const chatApi = {
   },
 
   // 流式发送消息（Flux端点，保留兼容）
-  async sendMessageStreamFlux(message, onChunk, onComplete, onError) {
-    return this.sendMessageStream(message, onChunk, onComplete, onError)
+  async sendMessageStreamFlux(message, sessionId, onChunk, onComplete, onError) {
+    return this.sendMessageStream(message, sessionId, onChunk, onComplete, onError)
   }
 }
 

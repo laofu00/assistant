@@ -24,3 +24,29 @@ export function disableTool(toolName) {
 export function getAuditLogs(params) {
   return api.get('/chat/audit-logs', { params })
 }
+
+// 记忆管理
+export function listSessions(params) {
+  return api.get('/memory/sessions', { params })
+}
+export function getSessionDetail(sessionId) {
+  return api.get(`/memory/sessions/${sessionId}`)
+}
+export function clearSession(sessionId) {
+  return api.delete(`/memory/sessions/${sessionId}`)
+}
+export function getLongTermMemory() {
+  return api.get('/memory/long-term')
+}
+export function deleteLongTermFact(factText) {
+  return api.delete('/memory/long-term', { data: { fact_text: factText } })
+}
+export function getProfile() {
+  return api.get('/memory/profile')
+}
+export function updateProfile(preferences) {
+  return api.put('/memory/profile', preferences)
+}
+export function setSessionTitle(sessionId, title) {
+  return api.put(`/memory/sessions/${sessionId}/title`, { title })
+}
