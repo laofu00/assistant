@@ -1,8 +1,6 @@
-# Smart Assistant — Python 重构版
+# Smart Assistant
 
 基于 AI 大模型的个人智能助手系统，支持智能对话、知识库管理、备忘录管理、邮件发送、简历匹配评估。
-
-> 从 Java（Spring Cloud 微服务）重构为 Python（LangGraph + FastAPI 单体）。
 
 ---
 
@@ -38,12 +36,19 @@ graph TD
     subgraph 存储层
         PG[(PostgreSQL: memos + token + audit)]
         CH[(ChromaDB: 知识库向量)]
-        RD[(Redis: 限流)]
+        RD[(Redis: JWT + 短期记忆 + 限流)]
     end
 
     TOOLS --> PG
     TOOLS --> CH
     TOKEN --> PG
+
+    subgraph 韧性层
+        CB[熔断器 + 降级缓存 + 死信]
+        RL[6层限流: API 3层 + 工具 3层]
+    end
+    TOOLS --> CB
+    TOOLS --> RL
 ```
 
 ---
@@ -149,7 +154,7 @@ npm run dev
 | 数据库 | PostgreSQL + SQLAlchemy | 持久化存储 |
 | Web 框架 | FastAPI + Uvicorn | 异步 API 服务 |
 | 前端 | Vue 3 + Element Plus | SPA 界面 |
-| 限流 | slowapi + Redis | API 令牌桶限流 |
+| 限流 | 自定义 + Redis Lua | API/工具 6 层限流 |
 | 监控 | Prometheus + loguru | 指标 + 结构化日志 |
 | 部署 | Docker Compose | 多服务编排 |
 
@@ -157,9 +162,9 @@ npm run dev
 
 ## 项目亮点
 
-1. **完整对齐 Java 版功能**：46 项功能逐项移植，检索流水线、记忆管理、工具注册中心、Token 计费等全部保留
-2. **6 步 RAG 检索流水线**：查询重写→混合检索→RRF 融合→MMR 多样化→LLM 重排序→RAG 生成，对齐学术最佳实践
-3. **多智能体并行评估**：简历匹配场景中 3 个专业化 Agent 并行执行，加权汇总生成结构化报告
-4. **企业级加固**：熔断器、降级缓存、PII 脱敏、Prompt Injection 防御、死信队列、K8s 探针分离
-5. **Supervisor 智能路由**：LLM 意图分类 + LangGraph 条件边，同一入口自动分流到不同子图
-6. **Python 生态优势**：LangGraph/LangChain 原生支持，代码量约为 Java 版的 40%，开发效率更高
+1. **ReAct 决策引擎**：18 个工具通过 12 步执行链统一管理，LLM 自主决策调用
+2. **多 Agent 并行评估**：3 个 Agent Send fan-out 并行执行，加权汇总 40/35/25
+3. **三层记忆体系**：Redis 短期 + PostgreSQL 长期画像 + ChromaDB 语义检索
+4. **企业级韧性**：熔断器、降级缓存、6 层限流、死信队列、双校验认证
+5. **安全防护**：PII 脱敏（5 种）、Prompt 注入双向防御（11+3 条模式）、系统提示词泄漏检测
+6. **完整可观测性**：LangFuse 链路追踪 + Prometheus 指标 + 4 级结构化日志
