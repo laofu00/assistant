@@ -59,7 +59,7 @@
         <template #default="{ row }">
           <el-button
             v-if="row.enabled"
-            type="warning"
+            type="danger"
             size="small"
             @click="handleDisable(row)"
           >
@@ -164,7 +164,7 @@ onMounted(refresh)
 .tool-management-page h2 {
   margin-bottom: 20px;
   font-size: 20px;
-  color: #303133;
+  color: var(--text-primary);
 }
 
 .stats-row {
@@ -180,14 +180,14 @@ onMounted(refresh)
 
 .stat-label {
   font-size: 14px;
-  color: #909399;
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
 .stat-value {
   font-size: 26px;
   font-weight: 600;
-  color: #409eff;
+  color: var(--primary);
 }
 
 .filter-bar {

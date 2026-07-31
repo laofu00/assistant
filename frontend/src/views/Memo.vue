@@ -274,8 +274,8 @@ defineExpose({
 }
 
 .memo-list {
-  background-color: white;
-  border-radius: 8px;
+  background-color: var(--bg-card);
+  border-radius: var(--radius-md);
   padding: 20px;
 }
 

@@ -509,9 +509,10 @@ const getCallPurposeDescription = (p) => ({
 /* ─── 筛选区 ─── */
 .filter-section {
   margin-bottom: 20px;
-  background: #f5f7fa;
+  background: var(--bg-card);
   padding: 16px 20px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
 }
 
 /* ─── 统计卡片 ─── */

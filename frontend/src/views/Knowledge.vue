@@ -39,10 +39,10 @@
     <!-- 文件列表 -->
     <div class="file-list">
       <el-table :data="files" v-loading="loading">
-        <el-table-column prop="fileName" label="文件名" width="250" />
-        <el-table-column prop="fileType" label="类型" width="150" />
-        <el-table-column prop="chunkCount" label="分块数" width="150" />
-        <el-table-column prop="status" label="状态" width="120">
+        <el-table-column prop="fileName" label="文件名" min-width="200" />
+        <el-table-column prop="fileType" label="类型" width="100" />
+        <el-table-column prop="chunkCount" label="分块数" width="100" />
+        <el-table-column prop="status" label="状态" width="100">
           <template #default="scope">
             <el-tag
               :type="getStatusType(scope.row.status)"
@@ -57,12 +57,12 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="createTime" label="上传时间" width="220">
+        <el-table-column prop="createTime" label="上传时间" width="180">
           <template #default="scope">
             {{ formatDateTime(scope.row.createTime) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="100">
           <template #default="scope">
             <el-button
               type="danger"
@@ -305,8 +305,8 @@ onMounted(() => {
 }
 
 .file-list {
-  background-color: white;
-  border-radius: 8px;
+  background-color: var(--bg-card);
+  border-radius: var(--radius-md);
   padding: 20px;
 }
 

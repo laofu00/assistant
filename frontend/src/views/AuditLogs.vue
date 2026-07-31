@@ -232,7 +232,7 @@ onMounted(search)
 .audit-logs-page h2 {
   margin-bottom: 20px;
   font-size: 20px;
-  color: #303133;
+  color: var(--text-primary);
 }
 
 .stats-row {
@@ -248,14 +248,14 @@ onMounted(search)
 
 .stat-label {
   font-size: 14px;
-  color: #909399;
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
 .stat-value {
   font-size: 26px;
   font-weight: 600;
-  color: #409eff;
+  color: var(--primary);
 }
 
 .filter-bar {
@@ -268,12 +268,12 @@ onMounted(search)
 .mono-text {
   font-family: 'Consolas', 'Courier New', monospace;
   font-size: 12px;
-  color: #606266;
+  color: var(--text-regular);
 }
 
 .time-text {
   font-size: 13px;
-  color: #909399;
+  color: var(--text-secondary);
 }
 
 .detail-dialog :deep(.el-descriptions__label) {
@@ -285,7 +285,7 @@ onMounted(search)
   max-height: 300px;
   overflow-y: auto;
   padding: 8px;
-  background: #f5f7fa;
+  background: var(--bg-page);
   border-radius: 4px;
   font-size: 12px;
   line-height: 1.6;

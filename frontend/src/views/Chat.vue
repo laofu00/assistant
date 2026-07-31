@@ -29,12 +29,24 @@
       </div>
     </aside>
 
+    <!-- 网络断开提示 -->
+    <div v-if="!online" class="connection-banner">
+      <span>⚠ 网络连接已断开</span>
+      <button class="reconnect-btn" @click="retryConnection">重试连接</button>
+    </div>
+
     <div class="chat-container">
       <!-- 消息列表 -->
       <div class="chat-messages" ref="messagesContainer">
+        <!-- 历史消息加载提示 -->
+        <div v-if="visibleStart > 0" class="load-more-bar">
+          <el-button size="small" text @click="loadMoreMessages" :loading="loadingMore">
+            查看更早的消息（已隐藏 {{ visibleStart }} 条）
+          </el-button>
+        </div>
         <div
-          v-for="(message, index) in messages"
-          :key="index"
+          v-for="(message, index) in visibleMessages"
+          :key="messages.indexOf(message)"
           :class="['message-row', message.role === 'user' ? 'row-user' : 'row-ai']"
         >
           <div v-if="message.role === 'assistant'" class="avatar avatar-ai">✦</div>
@@ -115,7 +127,14 @@
           </div>
           <div v-if="message.role === 'user'" class="avatar avatar-user">{{ userStore.displayName?.charAt(0)?.toUpperCase() }}</div>
         </div>
-        <div v-if="loading" class="loading-indicator">
+        <!-- 空状态 -->
+      <div v-if="!loading && messages.length === 0 && !welcomeShown" class="empty-chat">
+        <div class="empty-chat-icon">💬</div>
+        <div class="empty-chat-text">开始新的对话</div>
+        <div class="empty-chat-hint">输入消息或点击下方快捷操作</div>
+      </div>
+
+      <div v-if="loading" class="loading-indicator">
           <el-icon class="is-loading"><Loading /></el-icon>
           {{ thinkingText }}
         </div>
@@ -185,6 +204,26 @@ const userStore = useUserStore()
 const messagesContainer = ref(null)
 const thinkingText = ref('正在思考...')
 const collapsedSteps = reactive({})
+
+// 网络状态监控
+const online = ref(navigator.onLine)
+const handleOnline = () => { online.value = true }
+const handleOffline = () => { online.value = false }
+const retryConnection = () => { online.value = navigator.onLine; if (online.value) ElMessage.success('网络已恢复') }
+
+// 虚拟滚动：控制可见消息数量
+const VISIBLE_BATCH = 50
+const visibleStart = ref(0)
+const loadingMore = ref(false)
+const welcomeShown = ref(true)
+
+const loadMoreMessages = () => {
+  loadingMore.value = true
+  setTimeout(() => {
+    visibleStart.value = Math.max(0, visibleStart.value - VISIBLE_BATCH)
+    loadingMore.value = false
+  }, 200)
+}
 
 // 会话管理
 const sessionList = computed(() => chatStore.sessionList)
@@ -268,6 +307,13 @@ const toolNameMap = {
 }
 
 const messages = computed(() => chatStore.messages)
+// 虚拟滚动可见窗口
+const visibleMessages = computed(() => {
+  const all = messages.value
+  if (all.length <= VISIBLE_BATCH || visibleStart.value === 0) return all
+  return all.slice(-Math.min(all.length, VISIBLE_BATCH))
+})
+const hasHiddenMessages = computed(() => messages.value.length > VISIBLE_BATCH && visibleStart.value > 0)
 const loading = computed(() => chatStore.loading)
 const inputMessage = computed({
   get: () => chatStore.inputMessage,
@@ -417,6 +463,9 @@ const clearChat = async () => {
 }
 
 onMounted(async () => {
+  window.addEventListener('online', handleOnline)
+  window.addEventListener('offline', handleOffline)
+
   // 只在 localStorage 无数据时才从服务端恢复
   if (chatStore.sessionList.length === 0) {
     await restoreFromServer()
@@ -427,6 +476,7 @@ onMounted(async () => {
   if (chatStore.messages.length === 0) {
     chatStore.initWelcomeMessage()
   }
+  welcomeShown.value = false
   scrollToBottom()
 })
 </script>
@@ -441,10 +491,11 @@ onMounted(async () => {
 .session-sidebar {
   width: 240px;
   flex-shrink: 0;
-  background: #f5f6f8;
+  background: var(--bg-page);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e8eaed;
+  border-right: 1px solid var(--border);
+  transition: background var(--transition);
 }
 
 .session-sidebar-header {
@@ -477,13 +528,15 @@ onMounted(async () => {
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s;
-  color: #606266;
+  color: var(--text-regular);
   font-size: 13px;
   margin-bottom: 2px;
 }
 
-.session-sidebar-item:hover { background: #e8eaef; }
-.session-sidebar-item.active { background: #dce6f5; color: #303133; font-weight: 500; }
+.session-sidebar-item:hover { background: var(--border-light); }
+.session-sidebar-item.active { background: rgba(64,158,255,0.1); color: var(--text-primary); font-weight: 500; }
+html.dark .session-sidebar-item:hover { background: var(--bg-sidebar-hover); }
+html.dark .session-sidebar-item.active { background: rgba(64,158,255,0.15); }
 
 .session-sidebar-title {
   flex: 1;
@@ -513,9 +566,10 @@ onMounted(async () => {
   overflow-y: auto;
   margin-bottom: 16px;
   padding: 24px;
-  background: #fff;
+  background: var(--bg-card);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
+  transition: background var(--transition);
 }
 
 .message-row {
@@ -523,7 +577,17 @@ onMounted(async () => {
   gap: 10px;
   margin-bottom: 20px;
   align-items: flex-start;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
+
+/* 黑暗模式额外覆盖 */
+html.dark .session-sidebar { background: var(--bg-sidebar); }
+html.dark .bubble-ai { background: var(--bg-chat-ai); border-color: var(--border); }
+html.dark .session-sidebar-item:hover { background: var(--bg-sidebar-hover); }
+html.dark .session-sidebar-item.active { background: var(--bg-sidebar-hover); }
+html.dark .thinking-step { background: rgba(64,158,255,0.08); border-color: rgba(64,158,255,0.15); }
+html.dark .thinking-step.done { background: rgba(255,255,255,0.03); border-color: var(--border); }
 
 .row-user { justify-content: flex-end; }
 .row-ai { justify-content: flex-start; }
@@ -827,6 +891,18 @@ onMounted(async () => {
   text-align: right;
 }
 
+/* ─── 空状态 ─── */
+.empty-chat {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 60px 20px; color: var(--text-secondary);
+}
+.empty-chat-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.5; }
+.empty-chat-text { font-size: 16px; font-weight: 500; color: var(--text-regular); margin-bottom: 8px; }
+.empty-chat-hint { font-size: 13px; }
+
+/* ─── 加载更多 ─── */
+.load-more-bar { text-align: center; padding: 8px; }
+
 /* ─── 加载状态 ─── */
 .loading-indicator {
   display: flex;
@@ -851,6 +927,11 @@ onMounted(async () => {
 .send-btn {
   height: auto;
   align-self: flex-end;
+}
+
+html.dark .chat-input-area .el-textarea__inner {
+  background: var(--bg-input) !important;
+  color: var(--text-primary) !important;
 }
 
 /* ─── 快捷操作 ─── */
