@@ -160,6 +160,19 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 30
     RATE_LIMIT_PER_DAY: int = 500
 
+    # ==================== API 全局限流 ====================
+    # 格式: "路径前缀": 每分钟限制
+    API_RATE_LIMITS: dict[str, int] = {
+        "/api/v1/chat": 20,         # SSE 流式对话
+        "/api/v1/auth/login": 10,   # 登录
+        "/api/v1/auth/register": 5, # 注册
+        "/api/v1/knowledge/upload": 10,  # 文件上传
+        "/api/v1/memo": 60,         # 备忘录 CRUD
+        "/api/v1/_default": 60,     # 兜底
+    }
+    API_RATE_LIMIT_IP_PER_MINUTE: int = 60     # 单 IP 全局限制
+    API_RATE_LIMIT_USER_PER_MINUTE: int = 120  # 单用户全局限制
+
     # ==================== JWT ====================
     JWT_SECRET: str = "smart-assistant-jwt-secret-key-change-in-production"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 小时

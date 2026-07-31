@@ -102,7 +102,11 @@ def create_app() -> FastAPI:
     # GZip 压缩
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-    # 请求上下文中间件
+    # API 全局限流中间件（最先执行，认证之前）
+    from src.core.rate_limit import ApiRateLimitMiddleware
+    app.add_middleware(ApiRateLimitMiddleware)
+
+    # 请求上下文中间件（JWT + Redis 认证）
     app.add_middleware(RequestContextMiddleware)
 
     # Prometheus 指标
