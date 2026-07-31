@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
@@ -152,21 +152,21 @@ async def chat(request: ChatRequest):
 
 @router.get("/chat/audit-logs")
 async def get_audit_logs(
-    user_id: str = Query(default="test"),
+    request: Request,
     tool_name: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ):
-    """查询工具审计日志"""
+    """查询当前用户的工具审计日志"""
     from sqlalchemy import and_, func, select
 
     from src.core.database import async_session_factory
     from src.models.tool_audit import ToolAuditLog
 
+    user_id = getattr(request.state, "user_id", "anonymous")
+
     async with async_session_factory() as session:
-        conditions = []
-        if user_id:
-            conditions.append(ToolAuditLog.user_id == user_id)
+        conditions = [ToolAuditLog.user_id == user_id]
         if tool_name:
             conditions.append(ToolAuditLog.tool_name == tool_name)
 

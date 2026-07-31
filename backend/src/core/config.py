@@ -1,6 +1,7 @@
 """应用配置 — pydantic-settings 从 .env 加载（55 配置项）"""
 
 from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,6 +41,53 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT: int = 15
     TOOL_WRITE_TIMEOUT: int = 20
     MAX_RETRIES: int = 3
+
+    # 工具限流（三层：单用户单工具 / 全局工具 / 单用户总 QPS，单位：次/分钟）
+    TOOL_RATE_LIMIT_USER_TOOL: dict[str, int] = {
+        "do_send_email": 3,
+        "do_send_formatted_email": 3,
+        "upload_knowledge": 5,
+        "delete_knowledge": 10,
+        "add_memo": 10,
+        "update_memo": 10,
+        "delete_memo": 10,
+        "complete_memo": 10,
+        "_default": 30,
+    }
+    TOOL_RATE_LIMIT_GLOBAL_TOOL: dict[str, int] = {
+        "chroma_ops": 200,
+        "smtp_ops": 30,
+        "db_write": 500,
+    }
+    TOOL_RATE_LIMIT_USER_TOTAL: int = 60
+
+    # 入参长度校验（字符数，0 或未配置则不限制）
+    TOOL_INPUT_MAX_LENGTHS: dict[str, int] = {
+        "add_memo.title": 50,
+        "add_memo.content": 10000,
+        "update_memo.title": 50,
+        "update_memo.content": 10000,
+        "upload_knowledge.file_path": 500,
+        "do_send_email.body": 50000,
+        "do_send_email.subject": 200,
+        "do_send_formatted_email.content_items": 50000,
+        "_default": 5000,
+    }
+
+    # 出参长度截断（字符数，0 则不截断）
+    TOOL_OUTPUT_MAX_LENGTHS: dict[str, int] = {
+        "get_document_content": 20000,
+        "list_memos": 8000,
+        "list_memos_by_date": 8000,
+        "search_knowledge": 12000,
+        "_default": 4000,
+    }
+
+    # 工具依赖健康检查间隔（秒）
+    TOOL_HEALTH_CHECK_INTERVAL: int = 30
+
+    # 审计日志异步刷入间隔（秒）
+    TOOL_AUDIT_FLUSH_INTERVAL: int = 2
 
     # ==================== 数据库 ====================
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/assistant"
@@ -114,6 +162,11 @@ class Settings(BaseSettings):
     # ==================== JWT ====================
     JWT_SECRET: str = "smart-assistant-jwt-secret-key-change-in-production"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 小时
+
+    # ==================== LangFuse（链路追踪） ====================
+    LANGFUSE_HOST: str = ""
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
 
     # ==================== 数据清理 ====================
     AUDIT_LOG_RETENTION_DAYS: int = 90

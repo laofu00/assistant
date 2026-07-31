@@ -15,11 +15,22 @@ async def get_current_user_id(request: Request) -> str:
     return user_id
 
 
+async def is_admin_user(user_id: str) -> bool:
+    """检查用户是否是管理员（返回 True/False，不抛异常）"""
+    async with async_session_factory() as session:
+        result = await session.execute(select(User).where(User.user_id == user_id))
+        user = result.scalar_one_or_none()
+    if not user:
+        return False
+    roles = (user.roles or "").split(",")
+    return "admin" in roles
+
+
 async def require_admin(request: Request) -> str:
     """获取管理员权限已验证的 user_id，非管理员返回 403"""
     user_id = await get_current_user_id(request)
     async with async_session_factory() as session:
-        result = await session.execute(select(User).where(User.id == user_id))
+        result = await session.execute(select(User).where(User.user_id == user_id))
         user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(401, "用户不存在")

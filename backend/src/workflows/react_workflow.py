@@ -1,9 +1,10 @@
 """ReAct 工作流 — LangGraph StateGraph（Agent ↔ Tools 循环）
 
 完整节点链：
-rate_limit → quota_check → load_memory → agent → tools/capture_token → save_memory → __end__
+quota_check → load_memory → agent → tools → save_memory → __end__
 """
 
+import asyncio
 import uuid
 from typing import Literal
 
@@ -131,14 +132,15 @@ async def _tools_node(state: AgentState) -> dict:
         tool_args = tc.get("args", {})
         tool_id = tc.get("id", "")
 
-        # 通过 ToolExecutor 执行（含超时/缓存/审计/熔断/重复检测）
+        start = asyncio.get_event_loop().time()
+
+        # 通过 ToolExecutor 执行（含校验/限流/健康检查/熔断/缓存/审计/metrics）
         try:
             # 找到原始工具函数
             tool_callable = None
             for t in _ALL_TOOLS:
                 t_name = getattr(t, "name", None) or getattr(t, "__name__", "")
                 if t_name == tool_name:
-                    # StructuredTool: 异步取 coroutine，同步取 func
                     tool_callable = getattr(t, "coroutine", None) or getattr(t, "func", None) or t
                     break
 
@@ -152,37 +154,36 @@ async def _tools_node(state: AgentState) -> dict:
                     trace_id=trace_id,
                 )
             else:
-                def _fallback(tool: str = tool_name, **kw: object) -> str:  # noqa: B023
-                    return f"工具 [{tool}] 未注册"
-                fallback = _fallback
-                result = await tool_executor._invoke(fallback, tool_args)
-
-            chain_entries.append({
-                "tool": tool_name,
-                "input": str(tool_args)[:200],
-                "output": str(result)[:200],
-            })
-            tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_id, name=tool_name))
-
-            # preview_email 调用后：强制 LLM 把预览内容完整展示给用户
-            if tool_name == "preview_email":
-                tool_messages.append(SystemMessage(
-                    content=(
-                        "[系统指令 - 最高优先级] 你刚才调用了邮件预览工具 preview_email。"
-                        "现在你必须立即执行以下步骤，不可跳过：\n"
-                        "1. 查看上面 ToolMessage 中返回的邮件预览内容\n"
-                        "2. 将预览内容**逐字逐句完整展示**给用户，包括收件人、主题、正文的每一个字\n"
-                        "3. 绝对禁止总结、省略、概括——必须展示完整原文\n"
-                        "4. 绝对禁止只说'请确认发送'而不展示内容\n"
-                        "5. 展示完预览后，最后询问：'请回复确认发送或取消'"
-                    )
-                ))
+                result = f"工具 [{tool_name}] 未注册"
 
         except Exception as e:
-            error_msg = f"工具执行异常: {e}"
+            result = f"工具执行异常: {e}"
             logger.error(f"工具 [{tool_name}] 执行异常: {e}")
-            tool_messages.append(ToolMessage(content=error_msg, tool_call_id=tool_id, name=tool_name))
-            chain_entries.append({"tool": tool_name, "input": str(tool_args)[:200], "output": error_msg})
+
+        duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
+
+        # 记录工具链（用于 Agent 记忆追踪）
+        chain_entries.append({
+            "tool": tool_name,
+            "input": str(tool_args)[:500],
+            "output": str(result)[:500],
+            "duration_ms": duration_ms,
+        })
+        tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_id, name=tool_name))
+
+        # preview_email 调用后：强制 LLM 把预览内容完整展示给用户
+        if tool_name == "preview_email":
+            tool_messages.append(SystemMessage(
+                content=(
+                    "[系统指令 - 最高优先级] 你刚才调用了邮件预览工具 preview_email。"
+                    "现在你必须立即执行以下步骤，不可跳过：\n"
+                    "1. 查看上面 ToolMessage 中返回的邮件预览内容\n"
+                    "2. 将预览内容**逐字逐句完整展示**给用户，包括收件人、主题、正文的每一个字\n"
+                    "3. 绝对禁止总结、省略、概括——必须展示完整原文\n"
+                    "4. 绝对禁止只说'请确认发送'而不展示内容\n"
+                    "5. 展示完预览后，最后询问：'请回复确认发送或取消'"
+                )
+            ))
 
     return {
         "messages": tool_messages,

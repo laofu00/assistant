@@ -14,6 +14,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from src.core.config import settings
 from src.core.exceptions import AppException
 from src.core.logging_config import setup_logging
+from src.core.metrics import get_metrics  # noqa: F401 — 注册自定义工具 Prometheus 指标
 from src.core.middleware import RequestContextMiddleware
 
 
@@ -36,6 +37,13 @@ async def lifespan(app: FastAPI):
         start_token_worker()
     except Exception as e:
         logger.warning(f"Token 后台任务启动失败（不影响服务）: {e}")
+
+    # 启动工具审计日志后台写入任务
+    try:
+        from src.tools.tool_wrapper import start_audit_worker
+        start_audit_worker()
+    except Exception as e:
+        logger.warning(f"审计日志后台任务启动失败（不影响服务）: {e}")
 
     # 启动死信队列定期重试
     try:

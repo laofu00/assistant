@@ -1,11 +1,12 @@
 """健康检查路由 — /health/live + /health/ready（K8s 探针分离）"""
 
+import asyncio
 import time
 
 from fastapi import APIRouter
+from sqlalchemy import text
 
 from src.core.config import settings
-from src.core.schema import R
 
 router = APIRouter(tags=["健康检查"])
 
@@ -30,15 +31,15 @@ async def health_ready():
     # 检查 ChromaDB
     try:
         from src.knowledge.vector_store import vector_store
-        vector_store._client.heartbeat()
+        await asyncio.get_event_loop().run_in_executor(None, vector_store.heartbeat)
     except Exception:
         components["chromadb"] = "unhealthy"
 
     # 检查 PostgreSQL
     try:
-        from src.core.database import engine
-        async with engine.connect() as conn:
-            await conn.execute(await conn.compile("SELECT 1"))  # type: ignore[arg-type]
+        from src.core.database import async_session_factory
+        async with async_session_factory() as session:
+            await asyncio.wait_for(session.execute(text("SELECT 1")), timeout=3)
     except Exception:
         components["postgresql"] = "unhealthy"
 
@@ -46,7 +47,7 @@ async def health_ready():
     if not settings.OPENAI_API_KEY:
         components["llm"] = "unconfigured"
 
-    all_healthy = all(v == "healthy" or v == "unconfigured" for v in components.values())
+    all_healthy = all(v in ("healthy", "unconfigured") for v in components.values())
     status = "ok" if all_healthy else "degraded"
 
     return {

@@ -220,6 +220,10 @@ class VectorStore:
         results = collection.get(where={"active": 1}, include=[])
         return len(results.get("ids", []))
 
+    def heartbeat(self) -> int:
+        """健康检查：返回心跳响应时间（毫秒）"""
+        return self._client.heartbeat()
+
 
 # 全局实例
 vector_store = VectorStore()

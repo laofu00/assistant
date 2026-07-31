@@ -6,7 +6,7 @@
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from loguru import logger
 
@@ -14,7 +14,7 @@ from src.core.config import settings
 from src.core.exceptions import CircuitBreakerOpenError
 
 
-class ToolPermission(str, Enum):
+class ToolPermission(StrEnum):
     READ_ONLY = "READ_ONLY"
     READ_WRITE = "READ_WRITE"
     ADMIN = "ADMIN"
@@ -28,6 +28,10 @@ class ToolMeta:
     parameter_count: int              # 参数数量
     category: str                     # knowledge/memo/email/date/user
     enabled: bool = True
+    version: int = 1                  # 工具版本号（灰度切流用）
+    input_max_lengths: dict[str, int] = field(default_factory=dict)  # 参数名 → 最大长度
+    output_max_length: int = 0        # 返回值截断长度（0=不截断）
+    dependency: str = ""              # 依赖类型 chromadb/postgresql/smtp/空
     _func: Callable | None = field(default=None, repr=False)
 
     @property
@@ -67,7 +71,9 @@ class CircuitBreaker:
             self.failure_count = 0
             logger.info("熔断器超时 → 半开，允许尝试")
             return
-        raise CircuitBreakerOpenError(f"熔断器已打开，请 {settings.AGENT_CIRCUIT_BREAKER_TIMEOUT - int(elapsed)} 秒后重试")
+        raise CircuitBreakerOpenError(
+            f"熔断器已打开，请 {settings.AGENT_CIRCUIT_BREAKER_TIMEOUT - int(elapsed)} 秒后重试"
+        )
 
 
 class ToolRegistry:
@@ -87,6 +93,10 @@ class ToolRegistry:
         permission: ToolPermission = ToolPermission.READ_ONLY,
         category: str = "other",
         parameter_count: int = 0,
+        version: int = 1,
+        input_max_lengths: dict[str, int] | None = None,
+        output_max_length: int = 0,
+        dependency: str = "",
     ) -> None:
         meta = ToolMeta(
             name=name,
@@ -94,6 +104,10 @@ class ToolRegistry:
             permission=permission,
             parameter_count=parameter_count,
             category=category,
+            version=version,
+            input_max_lengths=input_max_lengths or {},
+            output_max_length=output_max_length,
+            dependency=dependency,
             _func=func,
         )
         self._tools[name] = meta
@@ -102,6 +116,8 @@ class ToolRegistry:
 
     def register_tool(self, tool_func: Callable, permission: ToolPermission = ToolPermission.READ_ONLY) -> None:
         """从 langchain @tool 装饰的函数自动注册"""
+        from src.core.config import settings
+
         name = getattr(tool_func, "name", None) or getattr(tool_func, "__name__", "unknown")
         desc = getattr(tool_func, "description", "") or ""
         params = getattr(tool_func, "args_schema", None)
@@ -119,8 +135,36 @@ class ToolRegistry:
         elif "user" in name:
             category = "user"
 
+        # 推断依赖
+        dependency = ""
+        if category == "knowledge":
+            dependency = "chromadb"
+        elif category == "memo" or category == "user":
+            dependency = "postgresql"
+        elif category == "email":
+            dependency = "smtp"
+
+        # 推断输入长度限制
+        input_max_lengths: dict[str, int] = {}
+        if params and hasattr(params, "model_fields"):
+            default_limit = settings.TOOL_INPUT_MAX_LENGTHS.get("_default", 5000)
+            for field_name in params.model_fields:
+                key = f"{name}.{field_name}"
+                limit = settings.TOOL_INPUT_MAX_LENGTHS.get(key, default_limit)
+                input_max_lengths[field_name] = limit
+
+        # 推断输出长度限制
+        output_max_length = settings.TOOL_OUTPUT_MAX_LENGTHS.get(
+            name, settings.TOOL_OUTPUT_MAX_LENGTHS.get("_default", 4000)
+        )
+
         param_count = len(params.model_fields) if params and hasattr(params, "model_fields") else 0
-        self.register(tool_func, name, desc, permission, category, param_count)
+        self.register(
+            tool_func, name, desc, permission, category, param_count,
+            input_max_lengths=input_max_lengths,
+            output_max_length=output_max_length,
+            dependency=dependency,
+        )
 
     # ==================== 查询 ====================
 
@@ -176,6 +220,51 @@ class ToolRegistry:
 
     def check_breaker(self, name: str) -> None:
         self.get_breaker(name).check()
+
+    # ==================== 版本管理 ====================
+
+    def set_version(self, name: str, version: int) -> bool:
+        """切换工具版本（灰度切流用）"""
+        meta = self._tools.get(name)
+        if meta is None:
+            return False
+        meta.version = version
+        logger.info(f"工具 [{name}] 版本切换: v{version}")
+        return True
+
+    def get_version(self, name: str) -> int | None:
+        meta = self._tools.get(name)
+        return meta.version if meta else None
+
+    # ==================== 统计 ====================
+
+    def get_stats(self) -> dict:
+        """获取工具注册统计信息"""
+        all_tools = self.list_all()
+        enabled = [t for t in all_tools if t.enabled]
+        disabled = [t for t in all_tools if not t.enabled]
+
+        categories: dict[str, int] = {}
+        for t in all_tools:
+            categories[t.category] = categories.get(t.category, 0) + 1
+
+        return {
+            "total": len(all_tools),
+            "enabled": len(enabled),
+            "disabled": len(disabled),
+            "categories": categories,
+            "tools": [
+                {
+                    "name": t.name,
+                    "category": t.category,
+                    "permission": t.permission.value,
+                    "enabled": t.enabled,
+                    "version": t.version,
+                    "dependency": t.dependency,
+                }
+                for t in all_tools
+            ],
+        }
 
 
 # 全局实例

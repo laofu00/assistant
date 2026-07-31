@@ -54,6 +54,10 @@
             <el-icon><tools /></el-icon>
             <span>工具管理</span>
           </el-menu-item>
+          <el-menu-item index="/audit-logs">
+            <el-icon><list /></el-icon>
+            <span>审计日志</span>
+          </el-menu-item>
         </el-menu>
       </aside>
       <main class="content">
@@ -70,7 +74,7 @@ import { useUserStore } from './store/user'
 import { useChatStore } from './store/chat'
 import { ElMessageBox } from 'element-plus'
 import {
-  Document, Notebook, ChatLineRound, ArrowDown, PieChart, Tools, User, SwitchButton
+  Document, Notebook, ChatLineRound, ArrowDown, PieChart, Tools, List, User, SwitchButton
 } from '@element-plus/icons-vue'
 
 const router = useRouter()

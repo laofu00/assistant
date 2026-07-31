@@ -55,6 +55,12 @@ const routes = [
     name: 'ToolManagement',
     component: () => import('../views/ToolManagement.vue'),
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/audit-logs',
+    name: 'AuditLogs',
+    component: () => import('../views/AuditLogs.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 
