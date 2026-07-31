@@ -11,6 +11,7 @@ import time
 
 from loguru import logger
 
+from src.core.config import settings
 from src.core.metrics import memory_summary_duration_seconds, memory_summary_total
 
 # ChromaDB collection 前缀
@@ -95,7 +96,7 @@ class LongTermMemory:
             for m in messages[-6:]:
                 history += f"{m.get('role', '?')}: {str(m.get('content', ''))[:200]}\n"
 
-            llm = get_llm(temperature=0, streaming=False)
+            llm = get_llm(temperature=0, streaming=False, model=settings.MODEL_NAME_LIGHT)
             response = await llm.ainvoke(_EXTRACTION_PROMPT + history)
             text = str(response.content) if response.content else ""
 

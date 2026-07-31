@@ -156,7 +156,7 @@ async def _extract_structured_facts(messages: list[BaseMessage]) -> list[dict]:
             return f"{role}: {sanitize_pii(content)[:300]}"
 
         history_text = "\n".join(_fmt(m) for m in messages)
-        llm = get_llm(temperature=0, streaming=False)
+        llm = get_llm(temperature=0, streaming=False, model=settings.MODEL_NAME_LIGHT)
         response = await llm.ainvoke(_STRUCTURED_SUMMARY_PROMPT + history_text)
         text = str(response.content) if response.content else ""
 

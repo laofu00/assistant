@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     MODEL_NAME: str = "qwen-plus"
+    MODEL_NAME_LIGHT: str = "qwen-turbo"  # 轻量任务（分类/提取）用更快更便宜的模型
     EMBEDDING_MODEL: str = "text-embedding-v3"
 
     # ==================== 应用 ====================

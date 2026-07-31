@@ -9,6 +9,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
+from src.core.config import settings
 from src.core.llm_factory import get_llm, update_trace_context
 from src.models.state import AgentState
 
@@ -32,7 +33,7 @@ SUPERVISOR_PROMPT = """你是一个智能路由助手，判断用户意图。
 
 def create_supervisor_node():
     """创建 Supervisor 意图分类节点"""
-    llm = get_llm(temperature=0, streaming=False)
+    llm = get_llm(temperature=0, streaming=False, model=settings.MODEL_NAME_LIGHT)
 
     async def supervisor_node(state: AgentState) -> dict:
         """分析用户意图，返回分类结果"""

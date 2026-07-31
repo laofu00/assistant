@@ -121,9 +121,10 @@ async def async_classify_memo(title: str, content: str | None = None) -> str:
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        from src.core.config import settings
         from src.core.llm_factory import get_llm
 
-        llm = get_llm(temperature=0, streaming=False)
+        llm = get_llm(temperature=0, streaming=False, model=settings.MODEL_NAME_LIGHT)
         prompt_text = f"标题：{title}\n内容：{content or ''}"
         response = await llm.ainvoke([
             SystemMessage(
