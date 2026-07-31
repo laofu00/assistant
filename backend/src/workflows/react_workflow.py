@@ -86,7 +86,8 @@ async def _quota_check_node(state: AgentState) -> dict:
 
 
 async def _load_memory_node(state: AgentState) -> dict:
-    """加载历史记忆节点"""
+    """加载历史记忆节点（短期 + 长期）"""
+    user_id = state.get("user_id", "")
     session_id = state.get("session_id", "")
     messages = state["messages"]
     if not messages:
@@ -100,13 +101,30 @@ async def _load_memory_node(state: AgentState) -> dict:
     last_user = user_msgs[-1]
     current_message = last_user.content if isinstance(last_user.content, str) else ""
 
-    # 拼接历史 + 用户ID提示
-    formatted = await smart_memory.get_formatted_history(session_id, current_message)
-    formatted += f"\n\n[系统信息] 当前用户ID: {state.get('user_id', '')}"
+    # 短期记忆（Redis 会话历史）
+    formatted = await smart_memory.get_formatted_history(user_id, session_id, current_message)
+
+    # 长期记忆（ChromaDB 语义检索 + PG 用户画像）
+    try:
+        from src.core.long_term_memory import long_term_memory
+
+        ltm_facts = await long_term_memory.retrieve(user_id, current_message)
+        if ltm_facts:
+            facts_text = "\n".join(
+                f"  · [{f.get('type', '?')}] {f.get('fact', '')}"
+                for f in ltm_facts
+            )
+            formatted = (
+                f"[以下是关于该用户的长期记忆，供你个性化回复参考]\n{facts_text}\n[长期记忆结束]\n\n"
+                + formatted
+            )
+    except Exception as e:
+        logger.debug(f"长期记忆检索跳过: {e}")
+
+    formatted += f"\n\n[系统信息] 当前用户ID: {user_id}"
     formatted += "\n注意：所有需要 userId 参数的工具调用都必须使用上述用户ID。"
 
-    # 替换最后一条用户消息：返回新消息替换旧的
-    # add_messages reducer 通过 ID 去重，需用相同 ID
+    # 替换最后一条用户消息
     replacement = HumanMessage(content=formatted, id=last_user.id)
     return {"messages": [replacement]}
 
@@ -192,7 +210,8 @@ async def _tools_node(state: AgentState) -> dict:
 
 
 async def _save_memory_node(state: AgentState) -> dict:
-    """保存对话记忆节点"""
+    """保存对话记忆节点（短期写 Redis + 长期异步萃取）"""
+    user_id = state.get("user_id", "")
     session_id = state.get("session_id", "")
     messages = state["messages"]
 
@@ -201,7 +220,20 @@ async def _save_memory_node(state: AgentState) -> dict:
     assistant_msgs = [m for m in messages if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None)]
 
     if user_msgs and assistant_msgs:
-        smart_memory.add_messages(session_id, [user_msgs[-1], assistant_msgs[-1]])
+        await smart_memory.add_messages(user_id, session_id, [user_msgs[-1], assistant_msgs[-1]])
+
+    # 定期触发长期记忆萃取（每隔 8 轮对话）
+    try:
+        all_msgs = await smart_memory.get_messages(user_id, session_id)
+        if len(all_msgs) >= 8:
+            summary = await smart_memory.get_summary_facts(user_id, session_id)
+            from src.core.long_term_memory import long_term_memory
+
+            asyncio.create_task(
+                long_term_memory.extract_and_save(user_id, session_id, all_msgs[-8:], summary)
+            )
+    except Exception as e:
+        logger.debug(f"长期记忆萃取跳过: {e}")
 
     return {}
 

@@ -57,6 +57,45 @@ tool_audit_queue_size = Gauge(
     "审计日志队列待写入数量",
 )
 
+# ==================== 记忆 ====================
+
+memory_session_gauge = Gauge(
+    "assistant_memory_sessions",
+    "活跃会话记忆总数",
+)
+
+memory_summary_total = Counter(
+    "assistant_memory_summary_total",
+    "结构化摘要生成次数",
+)
+
+memory_summary_duration_seconds = Histogram(
+    "assistant_memory_summary_duration_seconds",
+    "结构化摘要生成耗时（秒）",
+    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+)
+
+# ==================== 简历匹配 ====================
+
+match_total = Counter(
+    "assistant_match_total",
+    "简历匹配总次数",
+    ["mode", "result"],  # mode: recruiter/candidate, result: success/error
+)
+
+match_agent_duration_seconds = Histogram(
+    "assistant_match_agent_duration_seconds",
+    "匹配 Agent 评估耗时（秒）",
+    ["agent"],  # tech/exp/risk
+    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0],
+)
+
+match_score_distribution = Histogram(
+    "assistant_match_score",
+    "匹配评分分布",
+    buckets=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+)
+
 
 def get_metrics() -> bytes:
     """生成 Prometheus 文本格式指标（供 /metrics 端点使用）"""

@@ -15,7 +15,6 @@ from loguru import logger
 
 from src.agents.supervisor import create_supervisor_node
 from src.core.llm_factory import set_trace_context
-from src.core.memory import smart_memory
 from src.models.state import AgentState
 from src.token.quota import quota_checker
 from src.workflows.match_workflow import match_app
@@ -45,13 +44,11 @@ async def _react_subgraph(state: AgentState) -> dict:
     """React 子图：完整 ReAct 工作流"""
     logger.info(f"路由到 ReAct 工作流, user={state.get('user_id')}")
 
-    config = {"configurable": {"thread_id": state.get("user_id", "default")}}
+    config = {"configurable": {"thread_id": state.get("session_id", state.get("user_id", "default"))}}
     result = await react_app.ainvoke(state, config)
 
-    # 保存记忆
-    messages = result.get("messages", [])
-    if messages:
-        smart_memory.add_messages(state.get("session_id", ""), messages)
+    # 保存记忆（注意：react_workflow 内部的 _save_memory_node 已保存，此处不再重复）
+    # 仅作兜底处理
 
     return result
 

@@ -61,6 +61,12 @@ const routes = [
     name: 'AuditLogs',
     component: () => import('../views/AuditLogs.vue'),
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/memory',
+    name: 'Memory',
+    component: () => import('../views/Memory.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 

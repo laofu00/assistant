@@ -9,6 +9,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from src.api.schemas import ChatRequest
 from src.core.llm_factory import set_trace_context
+from src.core.memory import sanitize_output
 from src.core.schema import R
 from src.models.state import AgentState
 from src.workflows.supervisor_workflow import supervisor_app
@@ -98,7 +99,7 @@ async def _stream_chat(message: str, user_id: str, session_id: str | None):
                     streamed_len = 0
                 else:
                     if not has_streamed and output and hasattr(output, "content") and output.content:
-                        yield {"event": "message", "data": output.content}
+                        yield {"event": "message", "data": sanitize_output(str(output.content), user_id)}
                     streamed_len = 0
 
             # 工具节点开始执行 → 发送思考过程事件
@@ -123,7 +124,7 @@ async def _stream_chat(message: str, user_id: str, session_id: str | None):
                 if output and isinstance(output, dict):
                     # 只在最外层 match_subgraph 完成时输出一次报告，避免嵌套节点重复
                     if match_depth == 0 and name == "match_subgraph" and output.get("match_report"):
-                        report = output["match_report"]
+                        report = sanitize_output(output["match_report"], user_id)
                         has_streamed = True
                         lines = report.split('\n')
                         for line in lines:

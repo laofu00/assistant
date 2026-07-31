@@ -129,13 +129,14 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=500, content={"code": 500, "data": None, "msg": "服务器内部错误"})
 
     # 注册路由
-    from src.api.routes import admin, auth, chat, health, knowledge, memo, token, tools, user
+    from src.api.routes import admin, auth, chat, health, knowledge, memo, memory, token, tools, user
 
     app.include_router(chat.router, prefix="/api/v1")
     app.include_router(knowledge.router, prefix="/api/v1")
     app.include_router(memo.router, prefix="/api/v1")
     app.include_router(token.router, prefix="/api/v1")
     app.include_router(tools.router, prefix="/api/v1")
+    app.include_router(memory.router, prefix="/api/v1")
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(user.router, prefix="/api/v1")
     app.include_router(admin.router, prefix="/api/v1")

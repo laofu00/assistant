@@ -58,6 +58,10 @@
             <el-icon><list /></el-icon>
             <span>审计日志</span>
           </el-menu-item>
+          <el-menu-item index="/memory">
+            <el-icon><cpu /></el-icon>
+            <span>记忆管理</span>
+          </el-menu-item>
         </el-menu>
       </aside>
       <main class="content">
@@ -74,7 +78,7 @@ import { useUserStore } from './store/user'
 import { useChatStore } from './store/chat'
 import { ElMessageBox } from 'element-plus'
 import {
-  Document, Notebook, ChatLineRound, ArrowDown, PieChart, Tools, List, User, SwitchButton
+  Document, Notebook, ChatLineRound, ArrowDown, PieChart, Tools, List, Cpu, User, SwitchButton
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -88,14 +92,12 @@ const handleUserCommand = async (command) => {
   if (command === 'logout') {
     try {
       await ElMessageBox.confirm('确定要退出登录吗？', '退出确认', {
-        confirmButtonText: '确定退出',
-        cancelButtonText: '取消',
-        type: 'warning'
+        confirmButtonText: '确定退出', cancelButtonText: '取消', type: 'warning'
       })
       userStore.logout()
       chatStore.clearMessages()
       router.push('/')
-    } catch (e) { /* cancelled */ }
+    } catch { /* cancelled */ }
   } else if (command === 'profile') {
     router.push('/profile')
   }
@@ -103,137 +105,38 @@ const handleUserCommand = async (command) => {
 </script>
 
 <style scoped>
-#app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
+#app { display: flex; flex-direction: column; height: 100%; }
 
-/* ===== Header ===== */
 .header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 24px;
-  height: 56px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  z-index: 100;
-  flex-shrink: 0;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0 24px; height: 56px; background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06); z-index: 100; flex-shrink: 0;
 }
+.logo { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.logo-icon { font-size: 24px; color: var(--primary); }
+.logo-text { font-size: 18px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.5px; }
+.user-dropdown { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); }
+.user-dropdown:hover { background: var(--bg-page); }
+.user-avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg,var(--primary),var(--primary-dark)); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; }
+.user-name { font-size: 14px; color: var(--text-regular); }
 
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  user-select: none;
-}
+.main-container { display: flex; flex: 1; overflow: hidden; }
+.sidebar { width: 220px; flex-shrink: 0; overflow-y: auto; }
+.sidebar :deep(.el-menu) { border-right: none; height: 100%; padding-top: 8px; }
+.sidebar :deep(.el-menu-item) { margin: 2px 8px; border-radius: var(--radius-sm); height: 44px; line-height: 44px; }
+.sidebar :deep(.el-menu-item.is-active) { background: linear-gradient(135deg,var(--primary),var(--primary-dark)) !important; }
+.sidebar :deep(.el-menu-item:hover) { background: var(--bg-sidebar-hover); }
 
-.logo-icon {
-  font-size: 24px;
-  color: var(--primary);
-}
+.content { flex: 1; overflow-y: auto; background: var(--bg-page); }
+#app.no-sidebar .content { background: var(--bg-page); }
+#app.no-sidebar .header { box-shadow: none; border-bottom: 1px solid var(--border); }
 
-.logo-text {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.5px;
-}
-
-.user-dropdown {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  transition: background var(--transition);
-}
-
-.user-dropdown:hover {
-  background: var(--bg-page);
-}
-
-.user-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.user-name {
-  font-size: 14px;
-  color: var(--text-regular);
-}
-
-/* ===== Layout ===== */
-.main-container {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
-
-.sidebar {
-  width: 220px;
-  flex-shrink: 0;
-  overflow-y: auto;
-}
-
-.sidebar :deep(.el-menu) {
-  border-right: none;
-  height: 100%;
-  padding-top: 8px;
-}
-
-.sidebar :deep(.el-menu-item) {
-  margin: 2px 8px;
-  border-radius: var(--radius-sm);
-  height: 44px;
-  line-height: 44px;
-  transition: all var(--transition);
-}
-
-.sidebar :deep(.el-menu-item.is-active) {
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark)) !important;
-}
-
-.sidebar :deep(.el-menu-item:hover) {
-  background: var(--bg-sidebar-hover);
-}
-
-.content {
-  flex: 1;
-  overflow-y: auto;
-  background: var(--bg-page);
-}
-
-/* 无侧边栏时全宽 */
-#app.no-sidebar .content {
-  background: var(--bg-page);
-}
-
-#app.no-sidebar .header {
-  box-shadow: none;
-  border-bottom: 1px solid var(--border);
-}
-
-/* ===== 响应式 ===== */
 @media (max-width: 768px) {
   .header { padding: 0 16px; }
-  .logo-text { font-size: 16px; }
   .sidebar { width: 64px; }
   .sidebar :deep(.el-menu-item span) { display: none; }
   .sidebar :deep(.el-menu-item) { justify-content: center; padding: 0 !important; }
 }
-
 @media (max-width: 480px) {
   .sidebar { display: none; }
   .user-name { display: none; }
