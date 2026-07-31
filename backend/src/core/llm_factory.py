@@ -125,6 +125,32 @@ def _extract_usage(response: LLMResult) -> dict | None:
 
 # 模块级单例回调，所有 LLM 实例共享
 _token_callback = _TokenCallback()
+_langfuse_handler = None  # 懒加载，仅当环境变量配置时启用
+
+
+def _get_langfuse_handler():
+    """获取 LangFuse 回调处理器（安全懒加载，配置缺失则不启用）"""
+    global _langfuse_handler  # noqa: PLW0603
+    if _langfuse_handler is not None:
+        return _langfuse_handler
+
+    # 检查必填环境变量（未配置 → 返回 None，不影响正常使用）
+    import os
+
+    if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
+        _langfuse_handler = False  # 标记为已检查，避免重复尝试
+        return None
+
+    try:
+        from langfuse.langchain import CallbackHandler
+
+        _langfuse_handler = CallbackHandler()
+        logger.info("[LangFuse] 链路追踪已启用")
+    except Exception as e:
+        logger.warning(f"[LangFuse] 初始化失败，追踪功能不可用: {e}")
+        _langfuse_handler = False
+
+    return _langfuse_handler if _langfuse_handler is not False else None
 
 
 def get_llm(
@@ -132,7 +158,7 @@ def get_llm(
     streaming: bool = True,
     model: str | None = None,
 ) -> BaseChatModel:
-    """获取已配置 Token 回调的 LLM 实例
+    """获取已配置 Token 回调 + LangFuse 追踪的 LLM 实例
 
     所有 Agent 必须通过此函数获取 LLM，确保 token 统计不遗漏。
     """
@@ -142,6 +168,10 @@ def get_llm(
         temperature=temperature,
         streaming=streaming,
     )
-    # 将回调注入为默认回调，所有 invoke/ainvoke/bind_tools 调用自动生效
-    llm.callbacks = [_token_callback]
+    # 回调链: [TokenCapture, LangFuse(可选)]
+    callbacks = [_token_callback]
+    lf = _get_langfuse_handler()
+    if lf is not None:
+        callbacks.append(lf)
+    llm.callbacks = callbacks
     return llm
