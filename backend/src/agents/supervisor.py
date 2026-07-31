@@ -12,42 +12,22 @@ from loguru import logger
 from src.core.llm_factory import get_llm, update_trace_context
 from src.models.state import AgentState
 
-SUPERVISOR_PROMPT = """你是一个智能路由助手。请分析用户的消息，判断其意图类别。
+SUPERVISOR_PROMPT = """你是一个智能路由助手，判断用户意图。
 
 ## 意图类别
 
 ### match（简历匹配）
-用户想要匹配/评估简历和JD（岗位描述），关键词包括：
-- "匹配"、"简历匹配"、"岗位匹配"、"评估匹配度"
-- "对比简历和JD"、"帮我看看这个岗位"
-- "我适合这个岗位吗"、"匹配度怎么样"
-- "帮我分析"、"怎么准备面试"、"我的优势"、"我的不足"
-
-如果识别为 match，请从用户消息中提取并判断：
-- resume_file：简历文件名（如 "my_resume.txt"），没有则留空
-- jd_file：JD文件名（如 "jd_1.txt"），没有则留空
-- jd_text：用户直接粘贴的JD文本内容，没有则留空
-- match_mode：视角类型
-  - "candidate"（候选人视角）：用户以求职者身份分析，关键词包括"帮我分析"、"我适合"、"怎么准备"、"我的优势"、"我的不足"、"面试准备"、"我能做什么"
-  - "recruiter"（招聘方视角）：用户以招聘方角度评估候选人，关键词包括"评估匹配度"、"这个候选人"、"帮我判断"、"是否合适"
-  - 默认为 "recruiter"
+用户想匹配简历和JD。从消息中提取：resume_file、jd_file、jd_text、match_mode。
+- match_mode: "candidate"（求职者要分析自己、"帮我分析""我的优势""怎么准备"）或 "recruiter"（招聘方评估候选人、默认值）
 
 ### general（通用对话）
-所有不属于简历匹配的请求，包括：
-- 知识库检索、文档管理
-- 备忘录创建、查询、管理
-- 邮件发送
-- 日期查询
-- 其他日常对话
+其他所有请求（知识库、备忘录、邮件、日期、闲聊等）。
 
-## 输出格式
-只输出一个JSON对象，不要加任何解释：
+## 输出
+只输出 JSON（不要任何解释）：
+{"intent":"match","resume_file":"...","jd_file":"...","jd_text":"...","match_mode":"recruiter|candidate"}
 
-{"intent": "match", "resume_file": "...", "jd_file": "...", "jd_text": "...", "match_mode": "recruiter|candidate"}
-
-或
-
-{"intent": "general"}"""
+或 {"intent":"general"}"""
 
 
 def create_supervisor_node():
@@ -66,7 +46,10 @@ def create_supervisor_node():
         content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
 
         # 简单关键词快速匹配（减少 LLM 调用）
-        match_keywords = ["匹配", "简历匹配", "岗位匹配", "评估匹配", "对比简历", "适合这个岗位", "匹配度", "帮我分析", "怎么准备", "评估", "候选人", "简历", "面试", "岗位"]
+        match_keywords = [
+            "匹配", "简历匹配", "岗位匹配", "评估匹配", "对比简历", "适合这个岗位",
+            "匹配度", "帮我分析", "怎么准备", "评估", "候选人", "简历", "面试", "岗位",
+        ]
         is_fast_match = any(kw in str(content) for kw in match_keywords)
 
         # 候选视角快速判断

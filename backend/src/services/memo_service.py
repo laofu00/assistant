@@ -119,16 +119,11 @@ async def async_classify_memo(title: str, content: str | None = None) -> str:
     from loguru import logger
 
     try:
-        from langchain_community.chat_models.tongyi import ChatTongyi
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        from src.core.config import settings
+        from src.core.llm_factory import get_llm
 
-        llm = ChatTongyi(
-            model=settings.MODEL_NAME,
-            dashscope_api_key=settings.OPENAI_API_KEY,
-            temperature=0,
-        )
+        llm = get_llm(temperature=0, streaming=False)
         prompt_text = f"标题：{title}\n内容：{content or ''}"
         response = await llm.ainvoke([
             SystemMessage(
