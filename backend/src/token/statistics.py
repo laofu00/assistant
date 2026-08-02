@@ -1,31 +1,40 @@
 """Token 统计查询 — 分页记录 + 汇总 + 按模型/按日期分组
 
 对齐 Java 版 TokenUsageService
+
+user_id=None 表示查询全部用户数据（管理员视角）
 """
 
 from datetime import date, datetime
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import async_session_factory
 from src.models.token_usage import TokenUsage
 
 
+def _build_conditions(user_id: str | None, start_time, end_time) -> list:
+    conditions = []
+    if user_id is not None:
+        conditions.append(TokenUsage.user_id == user_id)
+    if start_time:
+        conditions.append(TokenUsage.created_at >= start_time)
+    if end_time:
+        conditions.append(TokenUsage.created_at <= end_time)
+    return conditions
+
+
 class StatisticsService:
     """Token 使用统计服务"""
 
     async def query_records(
-        self, user_id: str, start_time: datetime | None = None, end_time: datetime | None = None,
+        self, user_id: str | None, start_time: datetime | None = None, end_time: datetime | None = None,
         page: int = 1, size: int = 20,
     ) -> dict:
         """分页查询 Token 使用记录"""
         async with async_session_factory() as session:
-            conditions = [TokenUsage.user_id == user_id]
-            if start_time:
-                conditions.append(TokenUsage.created_at >= start_time)
-            if end_time:
-                conditions.append(TokenUsage.created_at <= end_time)
+            conditions = _build_conditions(user_id, start_time, end_time)
 
             total = (await session.execute(select(func.count(TokenUsage.id)).where(*conditions))).scalar() or 0
 
@@ -42,15 +51,11 @@ class StatisticsService:
             }
 
     async def get_statistics(
-        self, user_id: str, start_time: datetime | None = None, end_time: datetime | None = None,
+        self, user_id: str | None, start_time: datetime | None = None, end_time: datetime | None = None,
     ) -> dict:
         """汇总统计"""
         async with async_session_factory() as session:
-            conditions = [TokenUsage.user_id == user_id]
-            if start_time:
-                conditions.append(TokenUsage.created_at >= start_time)
-            if end_time:
-                conditions.append(TokenUsage.created_at <= end_time)
+            conditions = _build_conditions(user_id, start_time, end_time)
 
             result = await session.execute(
                 select(
@@ -81,15 +86,11 @@ class StatisticsService:
             }
 
     async def get_by_model(
-        self, user_id: str, start_time: datetime | None = None, end_time: datetime | None = None,
+        self, user_id: str | None, start_time: datetime | None = None, end_time: datetime | None = None,
     ) -> list[dict]:
         """按模型分组统计"""
         async with async_session_factory() as session:
-            conditions = [TokenUsage.user_id == user_id]
-            if start_time:
-                conditions.append(TokenUsage.created_at >= start_time)
-            if end_time:
-                conditions.append(TokenUsage.created_at <= end_time)
+            conditions = _build_conditions(user_id, start_time, end_time)
 
             result = await session.execute(
                 select(
@@ -105,15 +106,11 @@ class StatisticsService:
             ]
 
     async def get_by_date(
-        self, user_id: str, start_time: datetime | None = None, end_time: datetime | None = None,
+        self, user_id: str | None, start_time: datetime | None = None, end_time: datetime | None = None,
     ) -> list[dict]:
         """按日期分组统计"""
         async with async_session_factory() as session:
-            conditions = [TokenUsage.user_id == user_id]
-            if start_time:
-                conditions.append(TokenUsage.created_at >= start_time)
-            if end_time:
-                conditions.append(TokenUsage.created_at <= end_time)
+            conditions = _build_conditions(user_id, start_time, end_time)
 
             result = await session.execute(
                 select(
@@ -128,19 +125,19 @@ class StatisticsService:
                 for row in result.all()
             ]
 
-    async def get_today_usage(self, user_id: str) -> dict:
+    async def get_today_usage(self, user_id: str | None) -> dict:
         """今日用量摘要"""
         today = date.today()
         async with async_session_factory() as session:
+            conditions = [func.date(TokenUsage.created_at) == today]
+            if user_id is not None:
+                conditions.append(TokenUsage.user_id == user_id)
             result = await session.execute(
                 select(
                     func.coalesce(func.sum(TokenUsage.total_tokens), 0),
                     func.coalesce(func.sum(TokenUsage.cost_amount), 0),
                     func.count(TokenUsage.id),
-                ).where(
-                    TokenUsage.user_id == user_id,
-                    func.date(TokenUsage.created_at) == today,
-                )
+                ).where(*conditions)
             )
             row = result.one_or_none()
             if row is None:

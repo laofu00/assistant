@@ -248,14 +248,22 @@ const getDefaultDateRange = () => {
   return [fmt(startDate), fmt(endDate)]
 }
 
+let themeObserver = null
+
 onMounted(() => {
   filterForm.dateRange = getDefaultDateRange()
   loadData()
+  // 监听主题切换，重绘图表
+  themeObserver = new MutationObserver(() => {
+    nextTick(() => { renderPieChart(); renderLineChart() })
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
 })
 
 onUnmounted(() => {
   pieChartInstance?.dispose()
   lineChartInstance?.dispose()
+  themeObserver?.disconnect()
 })
 
 watch([statisticsByModel, statisticsByDate], () => {
@@ -297,7 +305,7 @@ const loadData = async () => {
 
     if (modelRes.code === 0) {
       statisticsByModel.value = modelRes.data || []
-      const models = [...new Set((modelRes.data || []).map(m => m.model_name || m.model).filter(Boolean))]
+      const models = [...new Set((modelRes.data || []).map(m => m.model || m.model_name).filter(Boolean))]
       modelOptions.value = models
     }
 
@@ -343,8 +351,11 @@ const renderPieChart = () => {
   if (pieChartInstance) { pieChartInstance.dispose(); pieChartInstance = null }
   pieChartInstance = echarts.init(pieChartRef.value)
 
+  const isDark = document.documentElement.classList.contains('dark')
+  const textColor = isDark ? '#a0a3b1' : '#606266'
+
   const data = statisticsByModel.value.map(item => ({
-    name: item.model_name || 'qwen-plus',
+    name: item.model || item.model_name || 'qwen-plus',
     value: item.total_tokens || 0
   }))
   const total = data.reduce((s, i) => s + i.value, 0)
@@ -359,9 +370,10 @@ const renderPieChart = () => {
       radius: ['40%', '70%'],
       center: ['50%', '50%'],
       padAngle: 2,
-      itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+      itemStyle: { borderRadius: 4, borderColor: isDark ? '#1d1e1f' : '#fff', borderWidth: 2 },
       label: {
         show: true,
+        color: textColor,
         formatter: (p) => `${p.name}\n${((p.value / total) * 100).toFixed(1)}%`,
         fontSize: 11
       },
@@ -384,6 +396,9 @@ const renderLineChart = () => {
   const tokens = sorted.map(i => i.total_tokens || 0)
   const costs = sorted.map(i => parseFloat(i.total_cost || 0))
 
+  const isDark = document.documentElement.classList.contains('dark')
+  const textColor = isDark ? '#a0a3b1' : '#606266'
+
   lineChartInstance.setOption({
     tooltip: {
       trigger: 'axis',
@@ -395,12 +410,16 @@ const renderLineChart = () => {
         return html
       }
     },
-    legend: { data: ['Token数', '成本'], top: 0, right: 0 },
+    legend: { data: ['Token数', '成本'], top: 0, right: 0, textStyle: { color: textColor } },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 11 } },
+    xAxis: {
+      type: 'category', data: dates,
+      axisLabel: { fontSize: 11, color: textColor, rotate: dates.length > 12 ? 30 : 0 },
+      axisLine: { lineStyle: { color: isDark ? '#333' : '#e4e7ed' } },
+    },
     yAxis: [
-      { type: 'value', name: 'Token', axisLabel: { formatter: (v) => v >= 1000 ? (v / 1000) + 'k' : v } },
-      { type: 'value', name: '成本(元)', axisLabel: { formatter: (v) => '¥' + v.toFixed(2) } }
+      { type: 'value', name: 'Token', nameTextStyle: { color: textColor }, axisLabel: { color: textColor, formatter: (v) => v >= 1000 ? (v / 1000) + 'k' : v }, splitLine: { lineStyle: { color: isDark ? '#2c2c2e' : '#ebeef5' } } },
+      { type: 'value', name: '成本(元)', nameTextStyle: { color: textColor }, axisLabel: { color: textColor, formatter: (v) => '¥' + v.toFixed(2) }, splitLine: { lineStyle: { color: isDark ? '#2c2c2e' : '#ebeef5' } } }
     ],
     series: [
       {

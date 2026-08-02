@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import and_, func, select
 
+from src.core.auth_deps import is_admin_user
 from src.core.database import async_session_factory
 from src.core.schema import R
 from src.models.memo import Memo
@@ -122,10 +123,13 @@ async def list_memos(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=10, ge=1, le=100),
 ):
-    """查询备忘录列表"""
+    """查询备忘录列表 — 管理员查看全部用户"""
     user_id = _get_user_id(request)
+    is_admin = await is_admin_user(user_id)
     async with async_session_factory() as session:
-        conditions = [Memo.user_id == user_id, Memo.status != 0]
+        conditions = [Memo.status != 0]
+        if not is_admin:
+            conditions.insert(0, Memo.user_id == user_id)
         if category:
             conditions.append(Memo.category == category)
         if keyword:

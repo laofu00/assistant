@@ -22,8 +22,8 @@ async def is_admin_user(user_id: str) -> bool:
         user = result.scalar_one_or_none()
     if not user:
         return False
-    roles = (user.roles or "").split(",")
-    return "admin" in roles
+    roles = [r.strip().lower() for r in (user.roles or "").split(",")]
+    return "admin" in roles or "role_admin" in roles
 
 
 async def require_admin(request: Request) -> str:
@@ -34,8 +34,8 @@ async def require_admin(request: Request) -> str:
         user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(401, "用户不存在")
-    roles = (user.roles or "").split(",")
-    if "admin" not in roles:
+    roles = [r.strip().lower() for r in (user.roles or "").split(",")]
+    if "admin" not in roles and "role_admin" not in roles:
         raise HTTPException(403, "权限不足，需要管理员角色")
     return user_id
 

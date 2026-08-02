@@ -221,6 +221,17 @@ class ToolRegistry:
     def check_breaker(self, name: str) -> None:
         self.get_breaker(name).check()
 
+    # ==================== 权限修改 ====================
+
+    def set_permission(self, name: str, permission: ToolPermission) -> bool:
+        meta = self._tools.get(name)
+        if meta is None:
+            return False
+        old = meta.permission
+        meta.permission = permission
+        logger.info(f"工具 [{name}] 权限变更: {old.value} → {permission.value}")
+        return True
+
     # ==================== 版本管理 ====================
 
     def set_version(self, name: str, version: int) -> bool:

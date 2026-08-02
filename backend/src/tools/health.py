@@ -27,7 +27,7 @@ _TOOL_DEPENDENCY: dict[str, str] = {
     "complete_memo": "postgresql",
     "delete_memo": "postgresql",
     "update_memo": "postgresql",
-    "list_memos_by_date": "postgresql",
+    "delete_memos_batch": "postgresql",
     "get_current_user_email": "postgresql",
     "do_send_email": "smtp",
     "do_send_formatted_email": "smtp",

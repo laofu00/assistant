@@ -150,7 +150,7 @@ def _get_langfuse_handler():
         logger.warning(f"[LangFuse] 初始化失败，追踪功能不可用: {e}")
         _langfuse_handler = False
 
-    return _langfuse_handler if _langfuse_handler is not False else None
+    return _langfuse_handler if isinstance(_langfuse_handler, CallbackHandler) else None
 
 
 def get_llm(

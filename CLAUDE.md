@@ -79,7 +79,7 @@ fetch_docs (从 ChromaDB 取简历+JD)
 - 前端 `fetch` + `ReadableStream.getReader()` 逐行解析（`backend/src/api/index.js`）
 - JSON 编码的 chunk 由前端 `JSON.parse` 还原换行
 
-### 认证
+### 认证 & 角色
 
 - JWT (HS256, 24h) + Redis 双校验
 - 中间件 `RequestContextMiddleware` (纯 ASGI) 在入口统一拦截
@@ -87,6 +87,13 @@ fetch_docs (从 ChromaDB 取简历+JD)
 - 非公开路径：解析 JWT → Redis 校验 token 匹配 → `request.state.user_id`
 - 路由层不再做二次认证判断，直接信任 `request.state.user_id`
 - 公开路径: `/api/v1/auth/login`, `/api/v1/auth/register`, `/health`, `/metrics`, `/docs`
+
+**角色系统**（`backend/src/core/auth_deps.py`）：
+- `User.roles` 逗号分隔字符串（如 `"admin,READ_WRITE"`）
+- `is_admin_user(user_id)` — 查 DB 确认是否有 admin 角色（兼容 `ROLE_ADMIN`）
+- `require_admin` — FastAPI 依赖，非管理员返回 403
+- 前端 `useUserStore.isAdmin` — 登录时从后端返回 `roles`，App 启动时通过 `/auth/current` 同步
+- 管理员专属页面：用户管理、工具管理、审计日志、记忆管理（路由 `requiresAdmin` + 侧边栏 `v-if`）
 
 ### AgentState
 
@@ -97,16 +104,44 @@ fetch_docs (从 ChromaDB 取简历+JD)
 - `resume_filename`, `jd_text`, `match_report`, `final_score`: 匹配专用
 - `_tech_result`, `_exp_result`, `_risk_result`: 中间结果（下划线前缀约定）
 
-### 工具调用
+### 工具调用与管理
 
-ReAct 工作流中 18 个工具经过 `ToolExecutor` 统一包装：
-缓存查 → 超时控制(15s) → 熔断检查 → 执行 → 缓存写/降级 → 审计日志
+ReAct 工作流中工具经过 `ToolExecutor` (`backend/src/tools/tool_wrapper.py`) 统一包装，完整执行链（12 步）：
+
+1. 输入参数校验 → 2. 运行时权限验证（ADMIN 级工具拦截）→ 3. 依赖健康检查
+→ 4. 三层限流 → 5. 熔断检查 → 6. 全局禁用 + 用户黑名单双重检查
+→ 7. 重复调用检测 → 8. 只读工具缓存 → 9. 超时控制 → 10. 返回值截断
+→ 11. 缓存/熔断状态更新 → 12. 审计日志 + Prometheus 指标
+
+**工具禁用系统**：
+- 全局禁用：`POST /tools/{name}/disable` — 内存 `ToolMeta.enabled=False` + 持久化 `tool_config` 表
+- 用户级禁用：`POST /tools/users/{user_id}/disable` — `user_tool_blacklist` 表（用户+工具唯一）
+- 硬拦截：每次 Agent 决策前 `bind_tools` 时滤掉 `enabled=False` 的工具，LLM 完全不可见
+- 启动时从 `tool_config` 表加载禁用配置（`main.py` lifespan）
+- 工具权限级别支持在线修改：`PUT /tools/{name}/permission`
+
+**备忘录工具**（`backend/src/tools/memo_tool.py`）：
+- `list_memos` — 统一查询入口，支持 keyword / category / status / due_before / due_after / 分页
+- `delete_memos_batch` — 批量删除，`confirmed=False` 仅预览，`confirmed=True` 真删（强制确认）
+- 递归限制 `AGENT_RECURSION_LIMIT` 控制最大 agent↔tools 循环步数
 
 ### 前端 Store 约定
 
-- `useUserStore()`: `token`, `userId`, `username`, `nickname`（同步 localStorage）
-- `useChatStore()`: 消息列表 + 流式拼接（`startStreamAiMessage` → `appendStreamContent` → `completeStreamMessage`）
+- `useUserStore()`: `token`, `userId`, `username`, `nickname`, `roles`, `isAdmin`（同步 localStorage）
+  - `syncRoles()` — 启动时从 `/auth/current` 同步角色
+  - 登录时检测用户切换 → 自动清空旧用户的 `chat_*` localStorage
+- `useChatStore()`: 消息列表 + 会话列表 + 流式拼接
+  - `clearMessages()` — 清空当前会话 + 所有 `chat_*` localStorage + 调用后端清除 Redis 记忆
+  - 会话按 `chat_msgs_{sessionId}` 隔离存储
 - `chatApi.sendMessageStream()`: SSE 流式 fetch，不走 axios
+
+### 管理员数据可见性
+
+管理员访问普通功能页面时自动查看全部用户数据：
+- 知识库 `list_files` / 备忘录 `list_memos` — 跳过 `user_id` 过滤
+- Token 统计 — `user_id=None` → 查全部用户汇总
+- 审计日志 `chat/audit-logs` — 管理员看全部用户，显示 `user_name`（nickname > username）
+- 记忆管理 `memory/sessions` — `list_all_user_sessions()` Redis 扫描全量，详情带 `owner_user_id`
 
 ## 开发注意事项
 
@@ -116,7 +151,10 @@ ReAct 工作流中 18 个工具经过 `ToolExecutor` 统一包装：
 - **ChromaDB**: 支持嵌入式（PersistentClient，`CHROMA_URL=""`）或 HTTP 客户端（`CHROMA_URL=http://localhost:8001`）
 - **Token 捕获**: 使用 LangChain `TokenCaptureCallback` + 内存队列 + 后台任务写入 DB（避免 event loop 冲突）
 - **子图编译**: match_app 和 react_app 在模块级别 `.compile()`，导入即编译
-- **前端路由**: hash 模式 (`createWebHashHistory`)，`requiresAuth` meta 受路由守卫保护
+- **前端路由**: hash 模式 (`createWebHashHistory`)，`requiresAuth` / `requiresAdmin` meta 受路由守卫保护
+- **ReAct Agent 流式**: `get_llm(streaming=False)` — ChatTongyi 流式 + tool_calls 有 bug（`subtract_client_response` 索引越界），关闭 LLM 层流式，SSE 分词效果由 `astream_events` 提供
+- **递归限制**: `AGENT_RECURSION_LIMIT` 同时控制 supervisor 和 react_subgraph，防止死循环。`.env` 中配置项会被 Pydantic Settings 自动加载，优先级高于 `config.py` 默认值
+- **LangFuse**: 未配置环境变量时 `_langfuse_handler` 返回 None，需用 `isinstance` 检查而非 `is not False`（False 哨兵 bug 已修复）
 
 ## 文档
 

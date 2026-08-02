@@ -40,11 +40,23 @@
           <span>{{ truncate(row.description, 60) }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="permission" label="权限级别" width="100" align="center">
+      <el-table-column prop="permission" label="权限级别" width="160" align="center">
         <template #default="{ row }">
-          <el-tag :type="permTagType(row.permission)" size="small">
-            {{ row.permission }}
-          </el-tag>
+          <el-select
+            :model-value="row.permission"
+            size="small"
+            style="width: 140px"
+            @change="(val) => handlePermChange(row, val)"
+          >
+            <el-option
+              v-for="p in permOptions"
+              :key="p"
+              :label="p"
+              :value="p"
+            >
+              <el-tag :type="permTagType(p)" size="small" style="margin-right:0">{{ p }}</el-tag>
+            </el-option>
+          </el-select>
         </template>
       </el-table-column>
       <el-table-column prop="category" label="分类" width="100" align="center" />
@@ -83,11 +95,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
-import { listTools, enableTool, disableTool } from '../api/toolManagement'
+import { listTools, enableTool, disableTool, setToolPermission } from '../api/toolManagement'
 
 const tools = ref([])
 const loading = ref(false)
 const filterPermission = ref('')
+const permOptions = ['READ_ONLY', 'READ_WRITE', 'ADMIN']
 
 const enabledCount = computed(() => tools.value.filter(t => t.enabled).length)
 const disabledCount = computed(() => tools.value.filter(t => !t.enabled).length)
@@ -103,6 +116,16 @@ function applyFilter() {
 
 function permTagType(perm) {
   return perm === 'ADMIN' ? 'danger' : perm === 'READ_WRITE' ? 'warning' : 'info'
+}
+
+async function handlePermChange(row, newPerm) {
+  try {
+    await setToolPermission(row.name, newPerm)
+    row.permission = newPerm
+    ElMessage.success(`${row.name} 权限已更新为 ${newPerm}`)
+  } catch (e) {
+    ElMessage.error('修改权限失败')
+  }
 }
 
 function truncate(text, max) {

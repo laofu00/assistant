@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from loguru import logger
 from sqlalchemy import func, select, update
 
+from src.core.auth_deps import is_admin_user
 from src.core.config import settings
 from src.core.database import async_session_factory
 from src.core.llm_factory import set_trace_context
@@ -205,17 +206,17 @@ async def list_files(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=100, ge=1, le=1000),
 ):
-    """列出知识库文件（支持分页）"""
+    """列出知识库文件（支持分页）— 管理员查看全部用户"""
     user_id = _get_user_id(request)
+    is_admin = await is_admin_user(user_id)
     async with async_session_factory() as session:
-        total_q = select(func.count(KnowledgeFile.id)).where(
-            KnowledgeFile.user_id == user_id, KnowledgeFile.active == 1
-        )
+        conditions = [KnowledgeFile.active == 1]
+        if not is_admin:
+            conditions.append(KnowledgeFile.user_id == user_id)
+        total_q = select(func.count(KnowledgeFile.id)).where(*conditions)
         total = (await session.execute(total_q)).scalar() or 0
         offset = (page - 1) * size
-        q = select(KnowledgeFile).where(
-            KnowledgeFile.user_id == user_id, KnowledgeFile.active == 1
-        ).order_by(KnowledgeFile.created_at.desc()).offset(offset).limit(size)
+        q = select(KnowledgeFile).where(*conditions).order_by(KnowledgeFile.created_at.desc()).offset(offset).limit(size)
         result = await session.execute(q)
         files = result.scalars().all()
         records = [
@@ -237,9 +238,12 @@ async def list_files(
 async def get_file_status(file_id: int, request: Request):
     """获取单个文件处理状态（前端轮询用）"""
     user_id = _get_user_id(request)
+    is_admin = await is_admin_user(user_id)
     async with async_session_factory() as session:
         kf = await session.get(KnowledgeFile, file_id)
-        if not kf or kf.user_id != user_id:
+        if not kf:
+            raise HTTPException(404, "文件不存在")
+        if not is_admin and kf.user_id != user_id:
             raise HTTPException(404, "文件不存在")
         return R.ok({
             "id": kf.id,
@@ -255,9 +259,12 @@ async def get_file_status(file_id: int, request: Request):
 async def delete_file(file_id: int, request: Request):
     """删除知识库文件所有版本（PG + ChromaDB + 物理文件）"""
     user_id = _get_user_id(request)
+    is_admin = await is_admin_user(user_id)
     async with async_session_factory() as session:
         kf = await session.get(KnowledgeFile, file_id)
-        if not kf or kf.user_id != user_id:
+        if not kf:
+            raise HTTPException(404, "文件不存在")
+        if not is_admin and kf.user_id != user_id:
             raise HTTPException(404, "文件不存在")
         filename = kf.file_name
 

@@ -35,10 +35,11 @@
                 v-for="s in sessions"
                 :key="s.session_id"
                 :class="['session-item', { active: selectedId === s.session_id }]"
-                @click="selectSession(s.session_id)"
+                @click="selectSession(s)"
               >
-                <div class="session-id">{{ s.session_id }}</div>
+                <div class="session-id">{{ s.title || s.session_id }}</div>
                 <div class="session-meta">
+                  <el-tag v-if="s.user_id" size="small" type="warning">{{ s.user_id }}</el-tag>
                   <span>{{ s.message_count }} 条消息</span>
                   <el-tag v-if="s.ttl_seconds > 0" size="small" type="info">{{ formatTTL(s.ttl_seconds) }}</el-tag>
                 </div>
@@ -151,6 +152,7 @@ const sessions = ref([])
 const loading = ref(false)
 const clearing = ref(false)
 const selectedId = ref('')
+const selectedUserId = ref('')
 const currentMessages = ref([])
 const currentFacts = ref([])
 
@@ -183,10 +185,11 @@ async function refreshSessions() {
   } catch { ElMessage.error('加载会话列表失败') } finally { loading.value = false }
 }
 
-async function selectSession(sessionId) {
-  selectedId.value = sessionId
+async function selectSession(session) {
+  selectedId.value = session.session_id
+  selectedUserId.value = session.user_id || ''
   try {
-    const res = await getSessionDetail(sessionId)
+    const res = await getSessionDetail(session.session_id, session.user_id)
     if (res.code === 0) {
       currentMessages.value = res.data.messages || []
       currentFacts.value = res.data.summary_facts || []
@@ -198,9 +201,9 @@ async function handleClear() {
   try {
     await ElMessageBox.confirm('确定清除该会话记忆？', '确认', { type: 'warning' })
     clearing.value = true
-    await clearSession(selectedId.value)
+    await clearSession(selectedId.value, selectedUserId.value)
     ElMessage.success('会话记忆已清除')
-    selectedId.value = ''; currentMessages.value = []; currentFacts.value = []
+    selectedId.value = ''; selectedUserId.value = ''; currentMessages.value = []; currentFacts.value = []
     await refreshSessions()
   } catch (e) { if (e !== 'cancel') ElMessage.error('操作失败') } finally { clearing.value = false }
 }

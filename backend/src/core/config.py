@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     TOOL_OUTPUT_MAX_LENGTHS: dict[str, int] = {
         "get_document_content": 20000,
         "list_memos": 8000,
-        "list_memos_by_date": 8000,
+        "delete_memos_batch": 8000,
         "search_knowledge": 12000,
         "_default": 4000,
     }
@@ -121,10 +121,10 @@ class Settings(BaseSettings):
     TOKEN_ALERT_WEBHOOK: str = ""
 
     # ==================== Agent ====================
-    AGENT_RECURSION_LIMIT: int = 10
+    AGENT_RECURSION_LIMIT: int = 15
     AGENT_MEMORY_MAX_MESSAGES: int = 20
     AGENT_SUMMARY_THRESHOLD: int = 12
-    AGENT_MAX_DUPLICATE_CALLS: int = 3
+    AGENT_MAX_DUPLICATE_CALLS: int = 5
     AGENT_CIRCUIT_BREAKER_THRESHOLD: int = 5
     AGENT_CIRCUIT_BREAKER_TIMEOUT: int = 60
 

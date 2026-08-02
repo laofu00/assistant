@@ -342,6 +342,38 @@ class SmartMemory:
         r = await get_redis()
         keys = await r.keys(f"{_MEM_MSG_PREFIX}:{user_id}:{pattern}")
         meta = await self._get_session_meta(user_id)
+        return await self._build_session_list(r, keys, meta)
+
+    async def list_all_user_sessions(self) -> list[dict]:
+        """管理员视角：列出所有用户的会话"""
+        r = await get_redis()
+        keys = await r.keys(f"{_MEM_MSG_PREFIX}:*:*")
+        sessions = []
+        for key in keys:
+            key_str = key.decode() if isinstance(key, bytes) else key
+            # mem:msg:{user_id}:{session_id}
+            parts = key_str.split(":", 3)
+            if len(parts) < 4:
+                continue
+            uid = parts[2]
+            sid = parts[3]
+            raw = await r.get(key)
+            msgs = _deserialize_messages(raw) if raw else []
+            ttl = await r.ttl(key)
+            sessions.append({
+                "user_id": uid,
+                "session_id": sid,
+                "title": "新会话",
+                "message_count": len(msgs),
+                "first_message": msgs[0]["content"][:50] if msgs else "",
+                "last_message": msgs[-1]["content"][:50] if msgs else "",
+                "ttl_seconds": ttl,
+                "created_at": "",
+            })
+        sessions.sort(key=lambda s: s.get("last_message", ""), reverse=True)
+        return sessions
+
+    async def _build_session_list(self, r, keys: list, meta: dict) -> list[dict]:
         sessions = []
         for key in keys:
             session_id = key.decode() if isinstance(key, bytes) else key

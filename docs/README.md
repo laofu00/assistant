@@ -57,12 +57,14 @@ graph TD
 
 | 功能 | 说明 |
 |------|------|
-| **智能对话** | ReAct Agent 自主决策，18 个工具可选调用 |
+| **智能对话** | ReAct Agent 自主决策，17 个工具可选调用 |
 | **知识库 RAG** | 6 步检索流水线：查询重写→混合检索→RRF→MMR→重排→生成 |
-| **备忘录管理** | 完整 CRUD + 自动分类 + 日期范围查询 |
+| **备忘录管理** | 完整 CRUD + 自动分类 + 统一条件查询 + 批量删除（强制确认） |
 | **邮件发送** | SMTP 发送 + HTML 格式化模板 |
 | **简历匹配** | 3 Agent 并行评估（技术/经验/风险）+ 双模式视角（招聘方/候选人）+ 加权汇总报告 |
 | **Token 统计** | Token 捕获 + 9 模型成本计算 + 配额保护 + 死信容错 |
+| **用户管理** | 管理员可针对用户禁用/启用指定工具（黑名单持久化） |
+| **工具管理** | 全局启用/禁用（持久化）+ 权限级别在线修改 + 硬拦截 |
 
 ---
 
@@ -134,9 +136,18 @@ npm run dev
 | GET | `/api/v1/token/by-date` | 按日期统计 |
 | GET | `/api/v1/token/quota` | 今日用量 |
 | GET | `/api/v1/tools` | 工具列表 |
-| PUT | `/api/v1/tools/{name}/enable` | 启用工具 |
-| PUT | `/api/v1/tools/{name}/disable` | 禁用工具 |
+| PUT | `/api/v1/tools/{name}/enable` | 启用工具（持久化） |
+| PUT | `/api/v1/tools/{name}/disable` | 禁用工具（持久化） |
+| PUT | `/api/v1/tools/{name}/permission` | 修改工具权限级别 |
+| GET | `/api/v1/tools/users/{id}/disabled` | 用户被禁工具列表 |
+| POST | `/api/v1/tools/users/{id}/disable` | 对用户禁用工具 |
+| POST | `/api/v1/tools/users/{id}/enable` | 取消用户工具禁用 |
+| GET | `/api/v1/admin/users` | 用户列表（管理员） |
 | GET | `/api/v1/chat/audit-logs` | 审计日志 |
+| GET | `/api/v1/memory/sessions` | 会话记忆列表 |
+| GET | `/api/v1/memory/sessions/{id}` | 会话详情 |
+| DELETE | `/api/v1/memory/sessions/{id}` | 清除会话 |
+| GET | `/api/v1/memory/long-term` | 长期记忆 |
 | GET | `/health/live` | 存活探针 |
 | GET | `/health/ready` | 就绪探针 |
 | GET | `/metrics` | Prometheus 指标 |

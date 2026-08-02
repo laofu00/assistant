@@ -130,6 +130,7 @@ async def login(body: LoginRequest):
             "userId": user.user_id,
             "username": user.username,
             "nickname": user.nickname,
+            "roles": user.roles or "READ_WRITE",
         })
 
 

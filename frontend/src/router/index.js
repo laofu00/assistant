@@ -51,22 +51,28 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/user-management',
+    name: 'UserManagement',
+    component: () => import('../views/UserManagement.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
     path: '/tool-management',
     name: 'ToolManagement',
     component: () => import('../views/ToolManagement.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/audit-logs',
     name: 'AuditLogs',
     component: () => import('../views/AuditLogs.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/memory',
     name: 'Memory',
     component: () => import('../views/Memory.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]
 
@@ -90,6 +96,13 @@ router.beforeEach((to, from, next) => {
       console.log('Redirecting to login - authentication required')
       // 重定向到登录页面
       next('/login')
+      return
+    }
+
+    // 检查路由是否需要管理员权限
+    if (to.meta.requiresAdmin && !userStore.isAdmin) {
+      console.log('Redirecting to chat - admin required')
+      next('/chat')
       return
     }
 

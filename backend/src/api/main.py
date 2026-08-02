@@ -52,6 +52,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"死信重试任务启动失败（不影响服务）: {e}")
 
+    # 从 DB 加载工具禁用配置
+    try:
+        from src.api.routes.tools import load_tool_config_from_db
+        await load_tool_config_from_db()
+    except Exception as e:
+        logger.warning(f"工具配置加载失败（不影响服务）: {e}")
+
     yield
 
     # 关闭

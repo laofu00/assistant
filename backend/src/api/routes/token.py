@@ -1,14 +1,24 @@
-"""Token 统计路由 — GET /token/records, /statistics, /by-model, /by-date, /quota"""
+"""Token 统计路由 — GET /token/records, /statistics, /by-model, /by-date, /quota
+
+管理员查询全部用户数据，普通用户仅查询自己
+"""
 
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 
-from src.core.auth_deps import get_current_user_id
+from src.core.auth_deps import get_current_user_id, is_admin_user
 from src.core.schema import R
 from src.token.statistics import statistics_service
 
 router = APIRouter(prefix="/token", tags=["Token统计"], dependencies=[Depends(get_current_user_id)])
+
+
+async def _get_token_user_id(user_id: str) -> str | None:
+    """管理员 → None（查全部）；普通用户 → 仅查自己"""
+    if await is_admin_user(user_id):
+        return None
+    return user_id
 
 
 @router.get("/records")
@@ -22,7 +32,7 @@ async def get_records(
     """Token 使用记录（分页）"""
     start = datetime.fromisoformat(start_time) if start_time else None
     end = datetime.fromisoformat(end_time) if end_time else None
-    result = await statistics_service.query_records(user_id, start, end, page, size)
+    result = await statistics_service.query_records(await _get_token_user_id(user_id), start, end, page, size)
     records = [
         {
             "id": r.id,
@@ -50,7 +60,7 @@ async def get_statistics(
     """汇总统计"""
     start = datetime.fromisoformat(start_time) if start_time else None
     end = datetime.fromisoformat(end_time) if end_time else None
-    result = await statistics_service.get_statistics(user_id, start, end)
+    result = await statistics_service.get_statistics(await _get_token_user_id(user_id), start, end)
     return R.ok({
         "totalTokens": result["total_tokens"],
         "totalInputTokens": result["total_input_tokens"],
@@ -71,7 +81,7 @@ async def get_by_model(
     """按模型分组统计"""
     start = datetime.fromisoformat(start_time) if start_time else None
     end = datetime.fromisoformat(end_time) if end_time else None
-    result = await statistics_service.get_by_model(user_id, start, end)
+    result = await statistics_service.get_by_model(await _get_token_user_id(user_id), start, end)
     return R.ok(result)
 
 
@@ -84,14 +94,14 @@ async def get_by_date(
     """按日期分组统计"""
     start = datetime.fromisoformat(start_time) if start_time else None
     end = datetime.fromisoformat(end_time) if end_time else None
-    result = await statistics_service.get_by_date(user_id, start, end)
+    result = await statistics_service.get_by_date(await _get_token_user_id(user_id), start, end)
     return R.ok(result)
 
 
 @router.get("/quota")
 async def get_quota(user_id: str = Depends(get_current_user_id)):
     """今日用量摘要"""
-    result = await statistics_service.get_today_usage(user_id)
+    result = await statistics_service.get_today_usage(await _get_token_user_id(user_id))
     result["daily_limit"] = 500_000
     result["cost_limit"] = 10.0
     return R.ok(result)

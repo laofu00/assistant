@@ -409,10 +409,17 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 清空当前会话
+  // 清空所有会话数据（登出时调用）
   const clearMessages = () => {
+    // 清除所有会话消息缓存
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('chat_msgs_')) localStorage.removeItem(key)
+    })
     messages.value = []
-    saveMessagesToStorage()
+    sessionList.value = []
+    currentSessionId.value = ''
+    localStorage.removeItem('chat_sessions')
+    localStorage.removeItem('chat_current_session')
   }
 
   // 设置加载状态

@@ -136,13 +136,13 @@ POST /auth/login
 
 ```
 System Prompt (~50行规则)
-  + 工具schema (18个 @tool)
+  + 工具schema (已启用的 @tool)
   + 注入记忆（短期摘要 + 长期事实 + 用户画像）
   + 注入 userId
   + 注入安全规则
 
-→ LLM (qwen-plus, temperature=0.3, streaming=True)
-  → bind_tools(18 tools)
+→ LLM (qwen-plus, temperature=0.3, streaming=False)
+  → bind_tools(仅 enabled=True 的工具)  ← 动态过滤，禁用工具LLM不可见
   → invoke(messages)
   → AIMessage { content, tool_calls? }
 ```
@@ -151,6 +151,7 @@ System Prompt (~50行规则)
 - **每次重新调工具**：不信任历史数据，LLM 每次决策都是从零开始
 - **工具报错不跳过**：报错是临时的，下次仍需尝试
 - **禁止跳过步骤**：如邮件必须先 preview 再 send
+- **禁用工具硬拦截**：每次 bind_tools 时滤掉 enabled=False 的工具，LLM 完全不可见
 
 ### 3.3 工具执行器（12步执行链）
 
@@ -222,28 +223,34 @@ System Prompt (~50行规则)
 ToolRegistry:
   register(func, name, permission, category, ...)  # 注册
   list_by_permission(permission)                    # 按权限筛选
-  enable(name) / disable(name)                     # 动态启停
+  enable(name) / disable(name)                     # 动态启停（持久化 tool_config 表）
+  set_permission(name, permission)                  # 在线修改权限级别
   set_version(name, version)                       # 灰度切流
   get_stats()                                      # 统计信息
 ```
 
 每个工具携带元数据：名称、描述、权限级别（READ_ONLY/READ_WRITE/ADMIN）、分类、参数数量、输入长度限制、输出截断长度、依赖类型。
 
-### 5.2 18 个工具清单
+**工具禁用体系**：
+- 全局禁用 → 内存 `ToolMeta.enabled=False` + 持久化 `tool_config` 表（重启不丢失）
+- 用户级禁用 → `user_tool_blacklist` 表（用户+工具唯一），管理员页面管理
+- 硬拦截 → 每次 Agent 决策前 `bind_tools` 过滤，禁用工具 LLM 完全不可见
+- 启动加载 → `main.py` lifespan 从 `tool_config` 表恢复配置
+
+### 5.2 工具清单
 
 | 分类 | 工具 | 权限 | 依赖 |
 |------|------|------|------|
-| 知识库 (5) | search_knowledge | READ_ONLY | chromadb |
+| 知识库 (4) | search_knowledge | READ_ONLY | chromadb |
 | | upload_knowledge | READ_WRITE | chromadb |
 | | get_document_content | READ_ONLY | chromadb |
 | | list_knowledge | READ_ONLY | chromadb |
-| | delete_knowledge | READ_WRITE | chromadb |
 | 备忘录 (6) | add_memo | READ_WRITE | postgresql |
 | | list_memos | READ_ONLY | postgresql |
 | | complete_memo | READ_WRITE | postgresql |
 | | delete_memo | READ_WRITE | postgresql |
+| | delete_memos_batch | READ_WRITE | postgresql |
 | | update_memo | READ_WRITE | postgresql |
-| | list_memos_by_date | READ_ONLY | postgresql |
 | 邮件 (3) | preview_email | READ_WRITE | smtp |
 | | do_send_email | READ_WRITE | smtp |
 | | do_send_formatted_email | READ_WRITE | smtp |
@@ -251,6 +258,9 @@ ToolRegistry:
 | | get_date_after_days | READ_ONLY | 无 |
 | | get_current_datetime | READ_ONLY | 无 |
 | | parse_date_range | READ_ONLY | 无 |
+
+> `list_memos` 统一了原来的 `list_memos` + `list_memos_by_date`，支持 keyword / category / status / due_before / due_after / 分页。
+> `delete_memos_batch` 默认 `confirmed=False` 仅预览，须 `confirmed=True` 才真删（强制确认）。
 
 ### 5.3 熔断器（CircuitBreaker）
 
@@ -363,13 +373,24 @@ Agent 回复中检测：
 
 命中则自动替换，防止通过对话诱导泄漏系统 Prompt。
 
-### 7.4 权限分级
+### 7.4 角色权限系统
 
 | 级别 | 可访问工具 | 典型角色 |
 |------|-----------|---------|
-| READ_ONLY | 查询类工具 | 普通用户 |
+| READ_ONLY | 查询类工具 | 管理员可单独限制 |
 | READ_WRITE | 查询+写入 | 登录用户（默认） |
 | ADMIN | 全部+管理 | 管理员 |
+
+**角色管理**：
+- `User.roles` 字段（逗号分隔，如 `"admin,READ_WRITE"`），兼容 `ROLE_ADMIN` 标识
+- 前端 `isAdmin` 控制侧边栏菜单可见性（用户管理/工具管理/审计日志/记忆管理仅管理员可见）
+- 路由守卫 `requiresAdmin` 拦截非管理员直接 URL 访问
+- 后端 `require_admin` FastAPI 依赖拦截非管理员 API 调用
+
+**管理员数据可见性**：
+- 知识库/备忘录/Token 统计 — 管理员自动查看全部用户数据
+- 审计日志 — 管理员查看全部用户 + 显示 user_name（昵称优先）
+- 记忆管理 — 管理员扫描全部用户 Redis 会话 + 长期记忆，详情带 owner_user_id
 
 ---
 
@@ -513,10 +534,11 @@ Vue 3 + Element Plus + Pinia + Vue Router (Hash模式)
   ├─ Chat.vue       → SSE 流式对话 + 思考过程可视化
   ├─ Knowledge.vue  → 文件上传/列表/删除
   ├─ Memo.vue       → 备忘录 CRUD + AI 分类
-  ├─ Memory.vue     → 会话记忆 + 长期记忆管理
-  ├─ TokenStatistics.vue → Token 用量图表
-  ├─ ToolManagement.vue  → 工具启用/禁用
-  ├─ AuditLogs.vue  → 审计日志查询
+  ├─ Memory.vue     → 会话记忆 + 长期记忆管理（管理员全部用户视角）
+  ├─ TokenStatistics.vue → Token 用量图表（管理员全部用户汇总）
+  ├─ ToolManagement.vue  → 工具启用/禁用 + 权限级别修改 + 持久化
+  ├─ UserManagement.vue  → 用户列表 + 按用户工具权限配置（管理员专属）
+  ├─ AuditLogs.vue  → 审计日志查询（管理员全部用户 + 显示用户名）
   └─ Profile.vue    → 个人资料 + 密码修改
 ```
 
@@ -554,7 +576,9 @@ while (true) {
 | user_info | 用户 | user_id, username, password(bcrypt), roles, status |
 | memo | 备忘录 | user_id, title, content, category, due_date, status |
 | ai_token_usage | Token记录 | trace_id, user_id, model_name, input/output_tokens, cost |
-| tool_audit_log | 审计日志 | trace_id, tool_name, tool_input/output, duration_ms, result |
+| tool_audit_log | 审计日志 | trace_id, user_id, tool_name, tool_input/output, duration_ms, result |
+| user_tool_blacklist | 用户工具黑名单 | user_id, tool_name, created_at |
+| tool_config | 工具配置持久化 | tool_name, enabled, updated_at |
 | user_profile | 用户画像 | user_id, preferences(JSONB), key_facts(JSONB) |
 | knowledge_file | 知识库 | user_id, file_name, chunk_count, status |
 

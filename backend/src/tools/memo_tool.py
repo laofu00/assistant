@@ -1,7 +1,9 @@
-"""备忘录工具 — @tool 封装（6 个方法）
+"""备忘录工具 — @tool 封装
 
-对齐 Java 版 MemoTool：add/list/complete/delete/update/list_by_date + 自动分类 + 相对日期替换
+add / list / complete / delete / delete_batch / update + 自动分类 + 相对日期替换
 """
+
+import json
 
 from langchain_core.tools import tool
 from loguru import logger
@@ -66,15 +68,25 @@ async def list_memos(
     user_id: str,
     keyword: str | None = None,
     category: str | None = None,
+    status: int | None = None,
+    due_before: str | None = None,
+    due_after: str | None = None,
     page: int = 1,
     limit: int = 10,
 ) -> str:
-    """查询用户的备忘录列表，支持按关键词和分类过滤。
+    """查询用户的备忘录列表，支持多条件组合过滤。
+
+    - 支持关键词（标题+内容联动）、分类、完成状态
+    - 支持到期日范围查询（due_before/due_after 可单独或组合使用）
+    - 例如"过期的" → due_before=今天，"本周"→ due_after=今天, due_before=本周日
 
     Args:
         user_id: 当前用户ID
-        keyword: 搜索关键词（搜索标题和内容），可选
+        keyword: 搜索关键词，可选
         category: 分类过滤，可选
+        status: 1=活跃 / 2=已完成，可选（不传=全部）
+        due_before: 到期在此日期之前（yyyy-MM-dd），可选
+        due_after: 到期在此日期之后（yyyy-MM-dd），可选
         page: 页码（默认1）
         limit: 每页数量（默认10）
     """
@@ -88,6 +100,18 @@ async def list_memos(
             conditions.append((Memo.title.ilike(kw)) | (Memo.content.ilike(kw)))
         if category and category.strip():
             conditions.append(Memo.category == category.strip())
+        if status is not None:
+            conditions.append(Memo.status == status)
+        if due_before:
+            d = parse_date(due_before)
+            if d:
+                conditions.append(Memo.due_date != None)  # noqa: E711
+                conditions.append(Memo.due_date <= d)
+        if due_after:
+            d = parse_date(due_after)
+            if d:
+                conditions.append(Memo.due_date != None)  # noqa: E711
+                conditions.append(Memo.due_date >= d)
 
         total_query = select(func.count(Memo.id)).where(and_(*conditions))
         total = (await session.execute(total_query)).scalar() or 0
@@ -103,8 +127,9 @@ async def list_memos(
         sb = f"找到 {total} 条备忘录（第{page}页）:\n"
         for i, m in enumerate(memos):
             due = m.due_date.strftime(DATE_FORMAT) if m.due_date else "无"
+            status_label = "✔" if m.status == 2 else "○"
             content = (m.content or "")[:500]
-            sb += f"{i + 1}. ID:{m.id} [{m.category}] {m.title} | 到期:{due}"
+            sb += f"{i + 1}. ID:{m.id} [{m.category}] {m.title} | 到期:{due} | 状态:{status_label}"
             if content:
                 sb += f" | {content}"
             sb += "\n"
@@ -187,51 +212,60 @@ async def update_memo(memo_id: int, title: str | None, content: str | None, due_
 
 
 @tool
-async def list_memos_by_date(
+async def delete_memos_batch(
+    memo_ids: str,
     user_id: str,
-    start_date: str,
-    end_date: str,
-    keyword: str | None = None,
-    limit: int = 10,
+    confirmed: bool = False,
 ) -> str:
-    """按到期日期范围查询备忘录。
+    """批量删除备忘录。必须先以 confirmed=False 预览，用户确认后再 confirmed=True 执行。
+
+    - 第一次调用 confirmed=False：展示待删除列表，提示用户确认
+    - 用户确认后第二次调用 confirmed=True：真正删除
 
     Args:
+        memo_ids: 备忘录ID列表，JSON数组格式，如 "[1,2,3]"，最多20条
         user_id: 当前用户ID
-        start_date: 开始日期（yyyy-MM-dd）
-        end_date: 结束日期（yyyy-MM-dd）
-        keyword: 可选关键词
-        limit: 返回数量（默认10）
+        confirmed: 用户是否已确认删除，默认 False（仅预览）
     """
-    start = parse_date(start_date)
-    end = parse_date(end_date)
-    if not start or not end:
-        return "日期格式错误，请使用 yyyy-MM-dd 格式"
+    try:
+        ids = json.loads(memo_ids)
+        if not isinstance(ids, list) or not ids:
+            return "memo_ids 格式错误，请使用 JSON 数组如 [1,2,3]"
+        ids = [int(i) for i in ids]
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return "memo_ids 格式错误，请使用 JSON 数组如 [1,2,3]"
+
+    if len(ids) > 20:
+        return f"最多批量删除 20 条，当前传入了 {len(ids)} 条"
 
     async with async_session_factory() as session:
-        conditions = [
-            Memo.user_id == user_id,
-            Memo.status != 0,
-            Memo.due_date >= start,
-            Memo.due_date <= end,
-        ]
-        if keyword and keyword.strip():
-            kw = f"%{keyword.strip()}%"
-            conditions.append((Memo.title.ilike(kw)) | (Memo.content.ilike(kw)))
-
-        query = select(Memo).where(and_(*conditions)).order_by(Memo.due_date.asc()).limit(limit)
-        result = await session.execute(query)
+        result = await session.execute(
+            select(Memo).where(Memo.id.in_(ids), Memo.user_id == user_id, Memo.status != 0)
+        )
         memos = result.scalars().all()
 
         if not memos:
-            return f"在 {start_date} 至 {end_date} 范围内没有找到备忘录。"
+            return "指定的备忘录均不存在或不属于当前用户"
 
-        sb = f"在 {start_date} ~ {end_date} 范围内找到 {len(memos)} 条备忘录:\n"
-        for i, m in enumerate(memos):
-            due = m.due_date.strftime(DATE_FORMAT) if m.due_date else "无"
-            content = (m.content or "")[:500]
-            sb += f"{i + 1}. ID:{m.id} [{m.category}] {m.title} | 到期:{due}"
-            if content:
-                sb += f" | 内容:{content}"
-            sb += "\n"
-        return sb.strip()
+        titles = [f"{m.title}(ID:{m.id})" for m in memos]
+        detail = "、".join(titles)
+        skipped = len(ids) - len(memos)
+
+        if not confirmed:
+            # 预览模式：只展示，不删除
+            msg = f"【预览】将删除以下 {len(memos)} 条备忘录：{detail}"
+            if skipped > 0:
+                msg += f"，{skipped} 条未找到或不属于您"
+            msg += '\n请回复"确认"以执行删除，或回复"取消"放弃。'
+            return msg
+
+        # 确认模式：真正删除
+        for m in memos:
+            m.status = 0
+        await session.commit()
+
+        msg = f"成功删除 {len(memos)} 条备忘录：{detail}"
+        if skipped > 0:
+            msg += f"，{skipped} 条未找到或不属于您"
+        _clear_memo_cache(user_id)
+        return msg

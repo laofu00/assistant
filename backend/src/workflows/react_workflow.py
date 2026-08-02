@@ -14,6 +14,7 @@ from langgraph.graph import END, StateGraph
 from loguru import logger
 
 from src.agents.react_agent import create_agent_node
+from src.core.config import settings
 from src.core.llm_factory import set_trace_context
 from src.core.memory import smart_memory
 from src.models.state import AgentState
@@ -44,8 +45,8 @@ def _register_tools() -> list:
         (memo_tool.list_memos, ToolPermission.READ_ONLY),
         (memo_tool.complete_memo, ToolPermission.READ_WRITE),
         (memo_tool.delete_memo, ToolPermission.READ_WRITE),
+        (memo_tool.delete_memos_batch, ToolPermission.READ_WRITE),
         (memo_tool.update_memo, ToolPermission.READ_WRITE),
-        (memo_tool.list_memos_by_date, ToolPermission.READ_ONLY),
         # EmailTool (4)
         (email_tool.preview_email, ToolPermission.READ_WRITE),
         (email_tool.do_send_email, ToolPermission.READ_WRITE),
@@ -285,7 +286,13 @@ def create_react_workflow() -> StateGraph:
 # MemorySaver 按 thread_id 隔离多轮对话
 checkpointer = MemorySaver()
 
-react_app = create_react_workflow().compile(checkpointer=checkpointer)
+react_app = create_react_workflow().compile(
+    checkpointer=checkpointer,
+    interrupt_before=[],
+)
+
+# 默认递归限制
+REACT_RECURSION_LIMIT = settings.AGENT_RECURSION_LIMIT
 
 
 async def run_react_agent(
@@ -330,6 +337,6 @@ async def run_react_agent(
         "final_score": None,
     }
 
-    config = {"configurable": {"thread_id": user_id}}
+    config = {"configurable": {"thread_id": user_id}, "recursion_limit": REACT_RECURSION_LIMIT}
     result = await react_app.ainvoke(initial_state, config)
     return result

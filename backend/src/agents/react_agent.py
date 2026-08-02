@@ -9,13 +9,14 @@ from loguru import logger
 from src.core.llm_factory import get_llm, update_trace_context
 from src.core.memory import sanitize_user_input
 from src.models.state import AgentState
+from src.tools.tool_registry import tool_registry
 
 # ==================== System Prompt ====================
 
 SYSTEM_PROMPT = """你是智能助理 Smart Assistant。根据用户需求自主选择工具完成任务。
 
 ## 可用工具
-- 备忘录：add_memo / list_memos / update_memo / delete_memo / complete_memo / list_memos_by_date
+- 备忘录：add_memo / list_memos / update_memo / delete_memo / delete_memos_batch / complete_memo
 - 知识库：search_knowledge / upload_knowledge / list_knowledge / get_document_content / delete_knowledge
 - 邮件：preview_email / do_send_email / do_send_formatted_email
 - 日期：get_current_date / get_current_datetime / get_date_after_days / parse_date_range
@@ -33,6 +34,8 @@ SYSTEM_PROMPT = """你是智能助理 Smart Assistant。根据用户需求自主
 - 标题 2-8 字，content 中将"今天""明天"替换为具体日期（如 2026-08-01）
 - 用户明确说了具体日期必须原样传入，只说了相对日期时才计算，没有就不传 due_date
 - 查询/更新/删除前必须先调 list_memos 获取最新 ID，禁止用历史 ID
+- **涉及日期查询时必须先调 get_current_date 获取今天的真实日期**，禁止自己猜日期（如用 due_before 查过期数据，due_before 必须来自 get_current_date 的返回值）
+- **批量删除**：先 list_memos 查结果→提取 ID→调 delete_memos_batch(confirmed=False) 展示预览→用户说"确认"后调 delete_memos_batch(confirmed=True) 执行删除
 - 用户未指明是哪一条时，先展示列表让用户选择
 
 ## 邮件规则
@@ -57,6 +60,10 @@ SYSTEM_PROMPT = """你是智能助理 Smart Assistant。根据用户需求自主
 # ==================== Agent 节点 ====================
 
 
+def _get_tool_name(t: callable) -> str:
+    return getattr(t, "name", None) or getattr(t, "__name__", "unknown")
+
+
 def create_agent_node(tools: list):
     """创建 Agent 决策节点
 
@@ -66,11 +73,14 @@ def create_agent_node(tools: list):
     Returns:
         节点函数 agent_node(state) → {"messages": [AIMessage]}
     """
-    llm = get_llm(temperature=0.3, streaming=True)
-    llm_with_tools = llm.bind_tools(tools)
+    llm = get_llm(temperature=0.3, streaming=False)
 
     def agent_node(state: AgentState) -> dict:
         """Agent 节点：LLM 决策 + 工具选择"""
+        # 每次决策前过滤掉被全局禁用的工具（硬拦截，LLM 根本不可见）
+        enabled_tools = [t for t in tools if tool_registry.is_enabled(_get_tool_name(t))]
+        llm_with_tools = llm.bind_tools(enabled_tools)
+
         messages = state["messages"]
         tool_chain = state.get("tool_chain", [])
 
@@ -105,8 +115,13 @@ def create_agent_node(tools: list):
             response = llm_with_tools.invoke(messages)
             return {"messages": [response]}
         except Exception as e:
-            logger.error(f"Agent 决策失败: {e}")
-            error_msg = AIMessage(content=f"抱歉，AI 服务暂时无法响应：{e}")
+            import traceback
+            logger.opt(exception=e).error(f"Agent 决策失败, messages 数量={len(messages)}")
+            detail = str(e)
+            # 列表越界通常是上下文过大导致 LLM 响应解析异常
+            if "list index out of range" in detail.lower():
+                detail = "AI 模型响应异常，可能是对话上下文过长。请开启新会话重试。"
+            error_msg = AIMessage(content=f"抱歉，AI 服务暂时无法响应：{detail}")
             return {"messages": [error_msg]}
 
     return agent_node

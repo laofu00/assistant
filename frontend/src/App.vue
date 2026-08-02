@@ -56,15 +56,19 @@
             <el-icon><pie-chart /></el-icon>
             <span>Token 统计</span>
           </el-menu-item>
-          <el-menu-item index="/tool-management">
+          <el-menu-item v-if="userStore.isAdmin" index="/user-management">
+            <el-icon><user-filled /></el-icon>
+            <span>用户管理</span>
+          </el-menu-item>
+          <el-menu-item v-if="userStore.isAdmin" index="/tool-management">
             <el-icon><tools /></el-icon>
             <span>工具管理</span>
           </el-menu-item>
-          <el-menu-item index="/audit-logs">
+          <el-menu-item v-if="userStore.isAdmin" index="/audit-logs">
             <el-icon><list /></el-icon>
             <span>审计日志</span>
           </el-menu-item>
-          <el-menu-item index="/memory">
+          <el-menu-item v-if="userStore.isAdmin" index="/memory">
             <el-icon><cpu /></el-icon>
             <span>记忆管理</span>
           </el-menu-item>
@@ -84,7 +88,7 @@ import { useUserStore } from './store/user'
 import { useChatStore } from './store/chat'
 import { ElMessageBox } from 'element-plus'
 import {
-  Document, Notebook, ChatLineRound, ArrowDown, PieChart, Tools, List, Cpu, User, SwitchButton,
+  Document, Notebook, ChatLineRound, ArrowDown, PieChart, Tools, List, Cpu, User, UserFilled, SwitchButton,
   Moon, Sunny
 } from '@element-plus/icons-vue'
 
@@ -106,6 +110,9 @@ const toggleTheme = () => applyTheme(!isDark.value)
 onMounted(() => {
   const saved = localStorage.getItem('theme')
   applyTheme(saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches))
+  if (userStore.isLoggedIn) {
+    userStore.syncRoles()
+  }
 })
 
 const handleUserCommand = async (command) => {

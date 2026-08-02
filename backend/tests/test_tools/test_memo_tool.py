@@ -165,12 +165,6 @@ class TestUpdateMemo:
 
 
 class TestListMemosByDate:
-    async def test_invalid_date_format(self) -> None:
-        with patch("src.tools.memo_tool.async_session_factory"):
-            from src.tools.memo_tool import list_memos_by_date
-            result = await list_memos_by_date.ainvoke({"user_id": "u1", "start_date": "bad", "end_date": "2025-01-01"})
-            assert "格式错误" in result
-
     async def test_valid_range_empty(self) -> None:
         mock_session = MagicMock()
         mock_session.execute = AsyncMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
@@ -178,8 +172,8 @@ class TestListMemosByDate:
         mock_sf.return_value.__aenter__.return_value = mock_session
 
         with patch("src.tools.memo_tool.async_session_factory", mock_sf):
-            from src.tools.memo_tool import list_memos_by_date
-            result = await list_memos_by_date.ainvoke({"user_id": "u1", "start_date": "2025-01-01", "end_date": "2025-12-31"})
+            from src.tools.memo_tool import list_memos
+            result = await list_memos.ainvoke({"user_id": "u1", "due_before": "2025-12-31", "due_after": "2025-01-01"})
             assert "没有找到" in result
 
     async def test_valid_range_with_results(self) -> None:
@@ -189,12 +183,13 @@ class TestListMemosByDate:
         mock_memo.title = "任务"
         mock_memo.due_date = None
         mock_memo.content = "详情"
+        mock_memo.status = 1
         mock_session = MagicMock()
         mock_session.execute = AsyncMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[mock_memo])))))
         mock_sf = MagicMock()
         mock_sf.return_value.__aenter__.return_value = mock_session
 
         with patch("src.tools.memo_tool.async_session_factory", mock_sf):
-            from src.tools.memo_tool import list_memos_by_date
-            result = await list_memos_by_date.ainvoke({"user_id": "u1", "start_date": "2025-01-01", "end_date": "2025-12-31"})
+            from src.tools.memo_tool import list_memos
+            result = await list_memos.ainvoke({"user_id": "u1", "due_before": "2025-12-31"})
             assert "任务" in result

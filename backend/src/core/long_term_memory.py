@@ -176,6 +176,10 @@ class LongTermMemory:
         """列出用户的所有长期记忆（管理页面用）"""
         from src.knowledge.vector_store import vector_store
 
+        if user_id is None:
+            # 管理员视角：列出所有用户的长期记忆
+            return await self._list_all_users(vector_store)
+
         collection_name = f"{_LTM_COLLECTION_PREFIX}_{user_id}"
         try:
             collection = vector_store._client.get_collection(collection_name)
@@ -200,6 +204,43 @@ class LongTermMemory:
                 -{"high": 3, "medium": 2, "low": 1}.get(f.get("importance", "medium"), 1)
             )),
             "fact_count": len(facts),
+        }
+
+    async def _list_all_users(self, vector_store) -> dict:
+        """管理员视角：汇总所有用户的长期记忆"""
+        all_facts = []
+        try:
+            collections = vector_store._client.list_collections()
+        except Exception:
+            return {"profile": {}, "facts": [], "fact_count": 0}
+
+        for col in collections:
+            col_name = col if isinstance(col, str) else col.name
+            if not col_name.startswith(f"{_LTM_COLLECTION_PREFIX}_"):
+                continue
+            user_id = col_name[len(f"{_LTM_COLLECTION_PREFIX}_"):]
+            try:
+                collection = vector_store._client.get_collection(col_name)
+                results = collection.get(include=["documents", "metadatas"])
+                for doc, meta in zip(results.get("documents", []), results.get("metadatas", []), strict=False):
+                    all_facts.append({
+                        "user_id": user_id,
+                        "fact": doc,
+                        "type": meta.get("type", "unknown"),
+                        "importance": meta.get("importance", "medium"),
+                        "session_id": meta.get("session_id", ""),
+                        "created_at": meta.get("created_at", ""),
+                    })
+            except Exception as e:
+                logger.warning(f"[长期记忆] 读取集合 {col_name} 失败: {e}")
+
+        return {
+            "profile": {},
+            "facts": sorted(all_facts, key=lambda f: (
+                -{"high": 3, "medium": 2, "low": 1}.get(f.get("importance", "medium"), 1)
+            )),
+            "fact_count": len(all_facts),
+            "all_users": True,
         }
 
     async def delete_fact(self, user_id: str, fact_text: str) -> bool:

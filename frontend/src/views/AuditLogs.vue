@@ -56,7 +56,7 @@
     <!-- 日志表格 -->
     <el-table :data="filteredLogs" stripe v-loading="loading" style="width: 100%; margin-top: 16px">
       <el-table-column prop="tool_name" label="工具名称" width="180" />
-      <el-table-column prop="user_id" label="用户" width="100" />
+      <el-table-column prop="user_name" label="用户" width="120" />
       <el-table-column prop="tool_input" label="输入参数" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="mono-text">{{ truncate(row.tool_input, 80) }}</span>
@@ -111,7 +111,7 @@
             <code>{{ currentLog.trace_id }}</code>
           </el-descriptions-item>
           <el-descriptions-item label="工具名称">{{ currentLog.tool_name }}</el-descriptions-item>
-          <el-descriptions-item label="用户">{{ currentLog.user_id }}</el-descriptions-item>
+          <el-descriptions-item label="用户">{{ currentLog.user_name || currentLog.user_id }}</el-descriptions-item>
           <el-descriptions-item label="结果">
             <el-tag :type="resultTagType(currentLog.result)" size="small">{{ resultLabel(currentLog.result) }}</el-tag>
           </el-descriptions-item>
@@ -285,13 +285,14 @@ onMounted(search)
   max-height: 300px;
   overflow-y: auto;
   padding: 8px;
-  background: var(--bg-page);
+  background: transparent;
   border-radius: 4px;
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
+  color: var(--text-primary);
 }
 
 .pagination-bar {

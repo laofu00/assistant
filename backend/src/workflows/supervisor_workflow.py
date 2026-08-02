@@ -14,6 +14,7 @@ from langgraph.graph import END, StateGraph
 from loguru import logger
 
 from src.agents.supervisor import create_supervisor_node
+from src.core.config import settings
 from src.core.llm_factory import set_trace_context
 from src.models.state import AgentState
 from src.token.quota import quota_checker
@@ -45,7 +46,7 @@ async def _react_subgraph(state: AgentState) -> dict:
     logger.info(f"路由到 ReAct 工作流, user={state.get('user_id')}")
 
     config = {"configurable": {"thread_id": state.get("session_id", state.get("user_id", "default"))}}
-    result = await react_app.ainvoke(state, config)
+    result = await react_app.ainvoke(state, {**config, "recursion_limit": settings.AGENT_RECURSION_LIMIT})
 
     # 保存记忆（注意：react_workflow 内部的 _save_memory_node 已保存，此处不再重复）
     # 仅作兜底处理
@@ -139,7 +140,9 @@ def create_supervisor_workflow() -> StateGraph:
 
 # MemorySaver 按 thread_id 隔离多轮对话
 checkpointer = MemorySaver()
-supervisor_app = create_supervisor_workflow().compile(checkpointer=checkpointer)
+supervisor_app = create_supervisor_workflow().compile(
+    checkpointer=checkpointer,
+)
 
 
 async def run_chat(

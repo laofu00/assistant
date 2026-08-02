@@ -223,13 +223,25 @@ class ToolExecutor:
             # ====== 步骤 5: 熔断检查 ======
             self.registry.check_breaker(tool_name)
 
-            # ====== 步骤 6: 禁用检查 ======
+            # ====== 步骤 6: 禁用检查（全局 + 用户黑名单）======
             if meta and not meta.enabled:
+                logger.warning(f"[工具拦截] {tool_name} 已被全局禁用，拒绝执行")
                 tool_calls_total.labels(
                     tool_name=tool_name, category=category,
                     permission=permission, result="disabled"
                 ).inc()
-                return f"[错误] 工具 [{tool_name}] 已被管理员禁用"
+                return f"[错误] 工具 [{tool_name}] 已被管理员全局禁用"
+
+            # 用户级黑名单检查
+            if await self._is_tool_disabled_for_user(tool_name, user_id):
+                logger.warning(f"[工具拦截] {tool_name} 已被对用户 {user_id} 禁用，拒绝执行")
+                self._log_audit(trace_id, user_id, session_id, tool_name,
+                                self._truncate_input(args), "", 0, False, "用户级禁用")
+                tool_calls_total.labels(
+                    tool_name=tool_name, category=category,
+                    permission=permission, result="disabled"
+                ).inc()
+                return f"[错误] 工具 [{tool_name}] 已被管理员对您禁用"
 
             # ====== 步骤 7: 重复调用检测 ======
             self._record_call(session_id, tool_name)
@@ -331,6 +343,26 @@ class ToolExecutor:
 
         finally:
             tool_active_calls.labels(tool_name=tool_name).dec()
+
+    @staticmethod
+    async def _is_tool_disabled_for_user(tool_name: str, user_id: str) -> bool:
+        """检查工具是否对该用户禁用（查黑名单表）"""
+        from sqlalchemy import select
+        from src.core.database import async_session_factory
+        from src.models.user_tool_blacklist import UserToolBlacklist
+
+        try:
+            async with async_session_factory() as session:
+                stmt = select(UserToolBlacklist).where(
+                    UserToolBlacklist.user_id == user_id,
+                    UserToolBlacklist.tool_name == tool_name,
+                )
+                result = await session.execute(stmt)
+                return result.scalar_one_or_none() is not None
+        except Exception:
+            # 黑名单查询失败不影响主流程，默认放行
+            logger.warning(f"用户工具黑名单查询失败: tool={tool_name} user={user_id}")
+            return False
 
     async def _invoke(self, func: Callable, args: dict[str, Any]) -> Any:
         """调用工具函数（支持同步和异步）"""

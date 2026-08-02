@@ -8,6 +8,7 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from src.api.schemas import ChatRequest
+from src.core.config import settings
 from src.core.llm_factory import set_trace_context
 from src.core.memory import sanitize_output
 from src.core.schema import R
@@ -56,7 +57,7 @@ async def _stream_chat(message: str, user_id: str, session_id: str | None):
         "_risk_result": None,
     }
 
-    config = {"configurable": {"thread_id": user_id}}
+    config = {"configurable": {"thread_id": user_id}, "recursion_limit": settings.AGENT_RECURSION_LIMIT}
 
     try:
         has_streamed = False
@@ -158,16 +159,21 @@ async def get_audit_logs(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ):
-    """查询当前用户的工具审计日志"""
+    """查询工具审计日志 — 管理员查看全部用户"""
     from sqlalchemy import and_, func, select
 
+    from src.core.auth_deps import is_admin_user
     from src.core.database import async_session_factory
     from src.models.tool_audit import ToolAuditLog
+    from src.models.user import User
 
     user_id = getattr(request.state, "user_id", "anonymous")
+    is_admin = await is_admin_user(user_id)
 
     async with async_session_factory() as session:
-        conditions = [ToolAuditLog.user_id == user_id]
+        conditions = []
+        if not is_admin:
+            conditions.append(ToolAuditLog.user_id == user_id)
         if tool_name:
             conditions.append(ToolAuditLog.tool_name == tool_name)
 
@@ -184,11 +190,20 @@ async def get_audit_logs(
         result = await session.execute(q)
         logs = result.scalars().all()
 
+        # 批量查找用户名
+        user_ids = list({log.user_id for log in logs})
+        username_map: dict[str, str] = {}
+        if user_ids:
+            user_result = await session.execute(select(User.user_id, User.username, User.nickname).where(User.user_id.in_(user_ids)))
+            for row in user_result:
+                username_map[row[0]] = row[2] or row[1]  # nickname > username
+
         records = [
             {
                 "id": log.id,
                 "trace_id": log.trace_id,
                 "user_id": log.user_id,
+                "user_name": username_map.get(log.user_id, log.user_id),
                 "tool_name": log.tool_name,
                 "tool_input": log.tool_input,
                 "tool_output": log.tool_output,

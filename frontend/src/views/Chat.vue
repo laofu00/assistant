@@ -452,6 +452,11 @@ const clearChat = async () => {
       '清空确认',
       { confirmButtonText: '确定清空', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' }
     )
+    // 同步清除 Redis 中的会话记忆
+    const sid = chatStore.currentSessionId
+    if (sid) {
+      clearSession(sid).catch(e => console.warn('Redis 会话清理失败:', e))
+    }
     chatStore.clearMessages()
     chatStore.initWelcomeMessage()
     ElMessage.success('对话已清空')

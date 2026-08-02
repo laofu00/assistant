@@ -131,6 +131,10 @@ html.dark {
 
   /* 对话框 */
   .el-dialog { background: var(--bg-card) !important; }
+  .el-descriptions__body { background: transparent !important; }
+  .el-descriptions__label,
+  .el-descriptions__content { background: transparent !important; color: var(--text-primary) !important; }
+  .el-descriptions__label { color: var(--text-regular) !important; }
   .el-dialog__title { color: var(--text-primary) !important; }
   .el-dialog__header { border-bottom: 1px solid var(--border); }
   .el-dialog__body { color: var(--text-regular) !important; }
@@ -156,11 +160,41 @@ html.dark {
 
   /* 日期选择器 */
   .el-date-editor .el-input__wrapper { background: var(--bg-input) !important; }
-  .el-picker-panel { background: var(--bg-card) !important; border-color: var(--border) !important; color: var(--text-primary) !important; }
+  .el-picker-panel,
+  .el-date-picker,
+  .el-date-picker__header,
+  .el-date-range-picker__content,
+  .el-date-range-picker__body,
+  .el-date-range-picker__picker { background: var(--bg-card) !important; }
+  .el-picker-panel { border-color: var(--border) !important; color: var(--text-primary) !important; }
+  .el-picker-panel__body,
+  .el-picker-panel__content { background: transparent !important; }
+  .el-picker-panel__footer { background: var(--bg-card) !important; border-top-color: var(--border) !important; }
+  .el-picker-panel__footer .el-button--text { color: var(--text-primary) !important; }
   .el-date-picker__header-label { color: var(--text-primary) !important; }
-  .el-date-table td.available:hover { color: var(--primary) !important; }
-  .el-date-table td.today span { color: var(--primary) !important; }
-  .el-date-table td.current:not(.disabled) span { background: var(--primary) !important; }
+  .el-date-picker__header-label:hover { color: var(--text-regular) !important; }
+  .el-date-table,
+  .el-date-table td,
+  .el-date-table td span,
+  .el-date-table td div { background: transparent !important; }
+  .el-date-table th { color: var(--text-secondary) !important; border-bottom-color: var(--border) !important; }
+  .el-month-table td .cell,
+  .el-year-table td .cell { color: var(--text-regular) !important; background: transparent !important; }
+  .el-month-table td .cell:hover,
+  .el-year-table td .cell:hover { background: #2a2a2a !important; }
+  .el-date-table td.available span { color: var(--text-regular) !important; }
+  .el-date-table td.available:hover span { color: var(--text-primary) !important; }
+  .el-date-table td.today span { color: var(--text-primary) !important; font-weight: bold; }
+  .el-date-table td.current:not(.disabled) span { background: var(--border) !important; color: var(--text-primary) !important; }
+  .el-date-table td.in-range div { background: var(--border-light) !important; }
+  .el-date-table td.start-date span,
+  .el-date-table td.end-date span { background: #555 !important; color: var(--text-primary) !important; }
+  .el-date-table td.next-month span,
+  .el-date-table td.prev-month span { color: var(--text-secondary) !important; }
+  .el-date-table td.disabled span { color: #555 !important; }
+  .el-date-range-picker__time-header { border-bottom-color: var(--border) !important; }
+  .el-picker-panel__icon-btn { color: var(--text-secondary) !important; }
+  .el-picker-panel__icon-btn:hover { color: var(--text-primary) !important; }
 
   /* 上传组件 */
   .el-upload-dragger { background: var(--bg-card) !important; border-color: var(--border) !important; }
