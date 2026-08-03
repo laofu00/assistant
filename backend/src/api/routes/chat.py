@@ -152,6 +152,57 @@ async def chat(request: ChatRequest):
     return EventSourceResponse(_stream_chat(request.message, request.user_id, request.session_id))
 
 
+# ==================== Mock（压测专用） ====================
+
+_MOCK_RESPONSE = (
+    "好的，我理解您的问题。让我来分析一下。"
+    "根据系统架构文档，这个问题可以从以下几个方面来回答："
+    "首先，系统的核心设计遵循了模块化和高内聚低耦合的原则。"
+    "其次，在实现层面采用了异步非阻塞的 IO 模型，确保了高并发下的性能表现。"
+    "最后，通过多层次的缓存和限流机制，保障了服务的稳定性。"
+    "综上所述，这是一个经过充分设计的系统方案。"
+)
+
+_MOCK_TOOL_NAME = "search_knowledge"
+
+
+async def _mock_stream():
+    """模拟 12 步防护链耗时 + LLM 推理延迟 + SSE 分块输出（压测用，延迟极简）"""
+    # 模拟 thinking 事件
+    yield {
+        "event": "thinking",
+        "data": json.dumps({"tool": _MOCK_TOOL_NAME, "status": "start"}, ensure_ascii=False),
+    }
+    await asyncio.sleep(0.005)
+
+    yield {
+        "event": "thinking",
+        "data": json.dumps({"tool": _MOCK_TOOL_NAME, "status": "done"}, ensure_ascii=False),
+    }
+    await asyncio.sleep(0.005)
+
+    # 模拟 LLM 流式输出：3 个块
+    for chunk in [_MOCK_RESPONSE[:60], _MOCK_RESPONSE[60:120], _MOCK_RESPONSE[120:]]:
+        yield {"event": "message", "data": chunk}
+        await asyncio.sleep(0.005)
+
+    yield {
+        "event": "metadata",
+        "data": json.dumps(
+            {"intent": "general", "tool_called": True, "session_id": "mock_session"},
+            ensure_ascii=False,
+        ),
+    }
+    yield {"event": "done", "data": "[DONE]"}
+
+
+@router.post("/chat/mock")
+async def chat_mock(request: ChatRequest):
+    """压测专用 mock 端点：完整中间件链路 + 模拟 SSE 流式输出，不调用真实 LLM"""
+    logger.info(f"POST /chat/mock user={request.user_id}, msg_len={len(request.message)}")
+    return EventSourceResponse(_mock_stream())
+
+
 @router.get("/chat/audit-logs")
 async def get_audit_logs(
     request: Request,

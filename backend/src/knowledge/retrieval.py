@@ -339,16 +339,26 @@ class RetrievalPipeline:
     # ==================== 公开接口 ====================
 
     async def search(self, user_id: str, query: str, top_k: int = 5) -> list[dict]:
-        """执行完整检索（步骤 1-5）"""
-        rewritten = await self._rewrite_query(query)
+        """执行完整检索（步骤 1-5），自适应跳过不适用的组件"""
+        # 自适应查询重写：小知识库跳过（LLM 重写反引入噪声）
+        if settings.QUERY_REWRITING_ENABLED and self.vs.count(user_id) >= settings.QUERY_REWRITE_MIN_DOCS:
+            rewritten = await self._rewrite_query(query)
+        else:
+            rewritten = query
 
         if settings.HYBRID_SEARCH_ENABLED:
             docs = self._hybrid_search(rewritten, user_id, top_k)
         else:
             docs = self.vs.search(user_id, rewritten, top_k)
 
-        docs = self._mmr_diversify(docs, top_k)
-        docs = await self._rerank(docs, query, top_k)
+        # 自适应 MMR：候选不足 top_k×2 时无多样性优化空间
+        if settings.MMR_ENABLED and len(docs) > top_k * 2:
+            docs = self._mmr_diversify(docs, top_k)
+
+        # 自适应 Rerank：候选不足阈值时跳过
+        if settings.RE_RANKING_ENABLED and len(docs) > settings.RE_RANK_THRESHOLD:
+            docs = await self._rerank(docs, query, top_k)
+
         return docs
 
     async def search_with_rag(self, user_id: str, query: str, top_k: int = 5) -> str:
@@ -358,9 +368,13 @@ class RetrievalPipeline:
 
     async def search_in_file(self, user_id: str, query: str, filename: str, top_k: int = 5) -> list[dict]:
         """在指定文件中检索"""
-        rewritten = await self._rewrite_query(query)
+        if settings.QUERY_REWRITING_ENABLED and self.vs.count(user_id) >= settings.QUERY_REWRITE_MIN_DOCS:
+            rewritten = await self._rewrite_query(query)
+        else:
+            rewritten = query
         docs = self.vs.search(user_id, rewritten, top_k * settings.VECTOR_CANDIDATE_MULTIPLIER, where={"source": filename})
-        docs = self._mmr_diversify(docs, top_k)
+        if settings.MMR_ENABLED and len(docs) > top_k * 2:
+            docs = self._mmr_diversify(docs, top_k)
         return docs
 
     async def search_in_file_with_rag(self, user_id: str, query: str, filename: str, top_k: int = 5) -> str:

@@ -21,7 +21,7 @@ async def get_redis() -> aioredis.Redis:
                     password=settings.REDIS_PASSWORD or None,
                     encoding="utf-8",
                     decode_responses=True,
-                    max_connections=10,
+                    max_connections=100,
                 )
     return _redis
 

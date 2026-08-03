@@ -131,7 +131,7 @@ _langfuse_handler = None  # 懒加载，仅当环境变量配置时启用
 def _get_langfuse_handler():
     """获取 LangFuse 回调处理器（安全懒加载，配置缺失则不启用）"""
     global _langfuse_handler  # noqa: PLW0603
-    if _langfuse_handler is not None:
+    if _langfuse_handler is not None and _langfuse_handler is not False:
         return _langfuse_handler
 
     # 检查必填环境变量（未配置 → 返回 None，不影响正常使用）

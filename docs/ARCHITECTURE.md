@@ -40,6 +40,8 @@
 | 缓存 | Redis 7 | JWT、短期记忆、限流计数 |
 | 可观测性 | LangFuse + Prometheus + loguru | 链路追踪、指标、结构化日志 |
 
+**RAG 检索管线**（`backend/src/knowledge/retrieval.py`）：6 步自适应流水线——查询重写(chunk≥30)→混合检索(向量+BM25)→RRF 融合→MMR 多样化(候选>top_k×2)→gte-rerank 重排(候选>20)→生成。各组件根据知识库规模自动开关，消融实验验证小数据集下 BM25 是唯一正向贡献组件（Hit@1 +6.2%），查询重写和 Rerank 为负优化。自适应后延迟降 91%（2.3s→205ms），精度无损。详见 `tests/bench_results.md`。
+
 ### 1.3 核心数字
 
 | 指标 | 数值 |

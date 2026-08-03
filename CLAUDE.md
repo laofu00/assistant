@@ -78,6 +78,31 @@ fetch_docs (从 ChromaDB 取简历+JD)
 - `match_depth` 嵌套计数器防止子图事件重复输出
 - 前端 `fetch` + `ReadableStream.getReader()` 逐行解析（`backend/src/api/index.js`）
 - JSON 编码的 chunk 由前端 `JSON.parse` 还原换行
+- **Mock 端点**: `POST /api/v1/chat/mock` — 压测专用，完整中间件链路 + 模拟 SSE 输出，不调用真实 LLM
+
+### 自适应检索管线（RAG）
+
+文件: `backend/src/knowledge/retrieval.py`
+
+6 步检索流水线，各组件根据知识库规模自适应开关，避免小数据集下过度调用 LLM：
+
+```
+查询重写(chunk≥30) → 混合检索(向量+BM25) → RRF 融合 → MMR 多样化(候选>top_k×2) → Rerank 重排(候选>20) → RAG 生成
+```
+
+| 组件 | 触发条件 | 配置项 | 说明 |
+|------|---------|--------|------|
+| 查询重写 | 全量 chunk ≥ 30 | `QUERY_REWRITE_MIN_DOCS` | 小数据集跳过，LLM 重写反引入噪声 |
+| 混合检索 | 始终启用 | `HYBRID_SEARCH_ENABLED` | 向量 + BM25，消融实验证明唯一正向贡献 |
+| MMR 多样化 | 候选 > top_k × 2 | `MMR_ENABLED` | 候选不足时无多样性优化空间 |
+| Rerank 重排序 | 候选 > 20 | `RE_RANKING_ENABLED` | 小候选集跳过 gte-rerank API 调用 |
+
+关键结论（来自消融实验）：
+- BM25 混合检索是唯一正向贡献组件（Hit@1 +6.2%）
+- 查询重写和 Rerank 在小文档集下是负优化（Hit@1 分别降 1.2% 和 1.3%）
+- 自适应后检索延迟从 2.3s 降至 205ms（-91%），精度无损
+
+评测脚本位于 `tests/rag_*.py`，结果记录在 `tests/bench_results.md`。
 
 ### 认证 & 角色
 
@@ -154,7 +179,24 @@ ReAct 工作流中工具经过 `ToolExecutor` (`backend/src/tools/tool_wrapper.p
 - **前端路由**: hash 模式 (`createWebHashHistory`)，`requiresAuth` / `requiresAdmin` meta 受路由守卫保护
 - **ReAct Agent 流式**: `get_llm(streaming=False)` — ChatTongyi 流式 + tool_calls 有 bug（`subtract_client_response` 索引越界），关闭 LLM 层流式，SSE 分词效果由 `astream_events` 提供
 - **递归限制**: `AGENT_RECURSION_LIMIT` 同时控制 supervisor 和 react_subgraph，防止死循环。`.env` 中配置项会被 Pydantic Settings 自动加载，优先级高于 `config.py` 默认值
-- **LangFuse**: 未配置环境变量时 `_langfuse_handler` 返回 None，需用 `isinstance` 检查而非 `is not False`（False 哨兵 bug 已修复）
+- **LangFuse**: 未配置环境变量时 `_langfuse_handler` 返回 None（`False` 哨兵 bug 已在 llm_factory.py 中修复，`_get_langfuse_handler` 和 `get_llm` 两处均加 `is not False` 判断）
+- **Redis 连接池**: `max_connections=100`（`redis_client.py`），支持 20+ 并发 JWT 校验
+- **限流**: `/api/v1/chat/mock` 单独配置 200/min，避免压测时被 chat 的 20/min 限制误伤
+
+## 测试
+
+| 脚本 | 用途 |
+|------|------|
+| `tests/rag_eval.py` | RAG 检索质量评测（Hit Rate@K / MRR / NDCG） |
+| `tests/rag_ablation.py` | 消融实验（组件开关对比） |
+| `tests/rag_debug_failures.py` | 失败案例分析（Top-N 关键词命中） |
+| `tests/rag_gen_eval.py` | 生成质量评估（Faithfulness / Answer Relevancy） |
+| `tests/cache_bench.py` | 缓存命中率模拟 + 成本分析 |
+| `tests/perf_test.py` | asyncio 并发压测（替代 Locust，避免 Windows gevent 问题） |
+| `tests/locustfile.py` | Locust 压测（需 Linux/Mac） |
+| `tests/bench_results.md` | 评测结果记录 |
+
+运行方式见各脚本头部注释。
 
 ## 文档
 
@@ -163,5 +205,7 @@ ReAct 工作流中工具经过 `ToolExecutor` (`backend/src/tools/tool_wrapper.p
 | `docs/ARCHITECTURE.md` | 架构决策记录（并行、认证、Token 捕获、扩展规划等） |
 | `docs/resume-match.md` | 简历匹配流程文档（数据流、耗时分析、文件清单） |
 | `docs/README.md` | 项目简介、Mermaid 架构图、API 文档、快速启动 |
+| `tests/bench_results.md` | 性能评测记录（5 轮优化历程） |
+| `tests/rag_debug_plan.md` | RAG 排查方案（嵌入/检索/生成三方向） |
 | `DEVELOPMENT_PLAN.md` | 开发计划（历史） |
 | `PROGRESS.md` | 开发进度记录 |

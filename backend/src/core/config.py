@@ -145,10 +145,11 @@ class Settings(BaseSettings):
     FTS_CANDIDATE_MULTIPLIER: int = 2
     RRF_CONSTANT_K: int = 30
     RE_RANKING_ENABLED: bool = True
-    RE_RANK_THRESHOLD: int = 10
+    RE_RANK_THRESHOLD: int = 20  # 候选数不足时跳过 Rerank（小文档集无重排空间）
     MMR_ENABLED: bool = True
     MMR_LAMBDA: float = 0.7
     QUERY_REWRITING_ENABLED: bool = True
+    QUERY_REWRITE_MIN_DOCS: int = 30  # 知识库文档数不足时跳过查询重写
     DYNAMIC_THRESHOLD_ENABLED: bool = True
     SIMILARITY_THRESHOLD_BASE: float = 0.15
 
@@ -163,6 +164,7 @@ class Settings(BaseSettings):
     # ==================== API 全局限流 ====================
     # 格式: "路径前缀": 每分钟限制
     API_RATE_LIMITS: dict[str, int] = {
+        "/api/v1/chat/mock": 200,   # 压测专用 mock 端点
         "/api/v1/chat": 20,         # SSE 流式对话
         "/api/v1/auth/login": 10,   # 登录
         "/api/v1/auth/register": 5, # 注册
