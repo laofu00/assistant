@@ -73,7 +73,7 @@ def create_agent_node(tools: list):
     Returns:
         节点函数 agent_node(state) → {"messages": [AIMessage]}
     """
-    llm = get_llm(temperature=0.3, streaming=False)
+    llm = get_llm(temperature=0.3, streaming=True)
 
     def agent_node(state: AgentState) -> dict:
         """Agent 节点：LLM 决策 + 工具选择"""

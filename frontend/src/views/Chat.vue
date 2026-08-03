@@ -471,13 +471,14 @@ onMounted(async () => {
   window.addEventListener('online', handleOnline)
   window.addEventListener('offline', handleOffline)
 
-  // 只在 localStorage 无数据时才从服务端恢复
+  await chatStore.syncSessionsFromBackend()
+
   if (chatStore.sessionList.length === 0) {
-    await restoreFromServer()
-  }
-  if (!chatStore.currentSessionId || chatStore.sessionList.length === 0) {
     chatStore.createSession()
+  } else if (!chatStore.currentSessionId) {
+    chatStore.switchSession(chatStore.sessionList[0].id)
   }
+
   if (chatStore.messages.length === 0) {
     chatStore.initWelcomeMessage()
   }

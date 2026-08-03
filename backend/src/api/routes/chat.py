@@ -10,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 from src.api.schemas import ChatRequest
 from src.core.config import settings
 from src.core.llm_factory import set_trace_context
-from src.core.memory import sanitize_output
+from src.core.memory import sanitize_output, sanitize_pii, sanitize_user_input
 from src.core.schema import R
 from src.models.state import AgentState
 from src.workflows.supervisor_workflow import supervisor_app
@@ -34,8 +34,12 @@ async def _stream_chat(message: str, user_id: str, session_id: str | None):
 
     from langchain_core.messages import HumanMessage
 
+    # 输入侧安全处理：Prompt 注入防御 → PII 脱敏（不发送敏感信息给 LLM）
+    safe_message = sanitize_user_input(message)
+    safe_message = sanitize_pii(safe_message)
+
     initial_state: AgentState = {
-        "messages": [HumanMessage(content=message)],
+        "messages": [HumanMessage(content=safe_message)],
         "user_id": user_id,
         "session_id": sid,
         "trace_id": trace_id,

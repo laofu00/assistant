@@ -177,9 +177,9 @@ ReAct 工作流中工具经过 `ToolExecutor` (`backend/src/tools/tool_wrapper.p
 - **Token 捕获**: 使用 LangChain `TokenCaptureCallback` + 内存队列 + 后台任务写入 DB（避免 event loop 冲突）
 - **子图编译**: match_app 和 react_app 在模块级别 `.compile()`，导入即编译
 - **前端路由**: hash 模式 (`createWebHashHistory`)，`requiresAuth` / `requiresAdmin` meta 受路由守卫保护
-- **ReAct Agent 流式**: `get_llm(streaming=False)` — ChatTongyi 流式 + tool_calls 有 bug（`subtract_client_response` 索引越界），关闭 LLM 层流式，SSE 分词效果由 `astream_events` 提供
+- **ReAct Agent 流式**: `get_llm(streaming=True)` — langchain-community 0.4.2 已修复 ChatTongyi 流式 + tool_calls 的 `subtract_client_response` 索引越界 bug
 - **递归限制**: `AGENT_RECURSION_LIMIT` 同时控制 supervisor 和 react_subgraph，防止死循环。`.env` 中配置项会被 Pydantic Settings 自动加载，优先级高于 `config.py` 默认值
-- **LangFuse**: 未配置环境变量时 `_langfuse_handler` 返回 None（`False` 哨兵 bug 已在 llm_factory.py 中修复，`_get_langfuse_handler` 和 `get_llm` 两处均加 `is not False` 判断）
+- **链路追踪**: 支持 LangFuse（云部署）和 LangSmith（本地开发）双模式，`llm_factory.py` 中 `setup_tracing()` 在应用启动时自动选择（LangFuse > LangSmith 优先级），详见 `.env` 配置项
 - **Redis 连接池**: `max_connections=100`（`redis_client.py`），支持 20+ 并发 JWT 校验
 - **限流**: `/api/v1/chat/mock` 单独配置 200/min，避免压测时被 chat 的 20/min 限制误伤
 

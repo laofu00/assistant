@@ -1,143 +1,139 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { formatDateTime } from '../utils/dateUtils.js'
+import axios from 'axios'
 
 function makeSessionId() {
   return 'session_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7)
 }
 
-export const useChatStore = defineStore('chat', () => {
-  // 当前会话 ID
-  const currentSessionId = ref(localStorage.getItem('chat_current_session') || '')
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
 
-  // 会话列表 [{id, title, time, messageCount}]
+function getAuthHeaders() {
+  const token = localStorage.getItem('token') || ''
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+// ==================== localStorage 操作（不依赖 auth，页面刷新瞬间可用） ====================
+
+function loadSessionList() {
+  try {
+    const saved = localStorage.getItem('chat_sessions')
+    return saved ? JSON.parse(saved) : []
+  } catch { return [] }
+}
+
+function saveSessionList(sessions) {
+  localStorage.setItem('chat_sessions', JSON.stringify(sessions))
+}
+
+function getCurrentSessionId() {
+  return localStorage.getItem('chat_current_session') || ''
+}
+
+function setCurrentSessionId(id) {
+  localStorage.setItem('chat_current_session', id)
+}
+
+function loadMessages(sessionId) {
+  if (!sessionId) return []
+  try {
+    const saved = localStorage.getItem('chat_msgs_' + sessionId)
+    return saved ? JSON.parse(saved) : []
+  } catch { return [] }
+}
+
+function saveMessages(sessionId, msgs) {
+  if (!sessionId) return
+  localStorage.setItem('chat_msgs_' + sessionId, JSON.stringify(msgs))
+}
+
+// ==================== store ====================
+
+export const useChatStore = defineStore('chat', () => {
+  // 当前会话 ID（纯 localStorage，不依赖后端）
+  const currentSessionId = ref(getCurrentSessionId())
+
+  // 会话列表（localStorage 为默认，Redis 异步更新）
   const sessionList = ref(loadSessionList())
 
-  // 从 localStorage 加载会话列表
-  function loadSessionList() {
-    try {
-      const saved = localStorage.getItem('chat_sessions')
-      return saved ? JSON.parse(saved) : []
-    } catch { return [] }
-  }
+  // 消息列表
+  const messages = ref(loadMessages(currentSessionId.value))
 
-  function saveSessionList() {
-    localStorage.setItem('chat_sessions', JSON.stringify(sessionList.value))
-  }
-
-  // 从 localStorage 加载当前会话的消息
-  function loadCurrentMessages() {
-    if (!currentSessionId.value) return []
-    try {
-      const saved = localStorage.getItem('chat_msgs_' + currentSessionId.value)
-      if (saved) return JSON.parse(saved)
-    } catch { return [] }
-    return []
-  }
-
-  // 消息列表（会话隔离）
-  const messages = ref(loadCurrentMessages())
-
-  // 是否正在加载
   const loading = ref(false)
-
-  // 当前流式消息的索引（-1表示无）
   const streamingMessageIndex = ref(-1)
-
-  // 输入框内容
   const inputMessage = ref('')
 
-  // 获取当前时间
-  const getCurrentTime = () => {
-    return formatDateTime(new Date())
+  // ==================== 消息持久化 ====================
+
+  function saveMessagesToStorage() {
+    saveMessages(currentSessionId.value, messages.value)
   }
 
-  // 初始化默认欢迎消息（如果没有消息）
-  const initWelcomeMessage = () => {
-    if (messages.value.length === 0) {
-      messages.value = [
-        {
-          role: 'ai',
-          content: '您好，我是您的智能助手 Smart Assistant，可以帮您做以下事情：\n'
-              + '1. 创建、查询、更新或删除备忘录（AI 自动分类）\n'
-              + '2. 从知识库中检索信息、上传和管理文档\n'
-              + '3. 简历与 JD 匹配评估（支持招聘方/求职者双视角）\n'
-              + '4. 整理信息并通过邮件发送\n'
-              + '5. 日期查询与计算\n'
-              + '\n请告诉我您需要什么帮助？',
-          time: getCurrentTime(),
-          intent: 'GENERAL',
-          references: []
-        }
-      ]
-      saveMessagesToStorage()
-    }
-  }
+  // ==================== 会话同步（Redis → localStorage，页面加载时执行一次） ====================
 
-  // 保存消息到 localStorage（按会话隔离）
-  const saveMessagesToStorage = () => {
-    if (!currentSessionId.value) return
+  async function syncSessionsFromBackend() {
     try {
-      localStorage.setItem('chat_msgs_' + currentSessionId.value, JSON.stringify(messages.value))
-      // 更新会话列表的标题和消息数
-      updateSessionMeta()
-    } catch { /* ignore */ }
-  }
+      const resp = await axios.get(`${API_BASE}/memory/sessions`, { headers: getAuthHeaders() })
+      const backendSessions = resp.data?.data || []
+      if (backendSessions.length === 0) return  // Redis 空，保留本地
 
-  // 更新会话列表中的元信息
-  function updateSessionMeta() {
-    const idx = sessionList.value.findIndex(s => s.id === currentSessionId.value)
-    if (idx >= 0) {
-      const userMsgs = messages.value.filter(m => m.role === 'user')
-      sessionList.value[idx].messageCount = messages.value.length
-      sessionList.value[idx].time = new Date().toISOString()
-      // 首次有用户消息时自动命名，已有名称不变
-      if (userMsgs.length === 1 && sessionList.value[idx].title === '新会话') {
-        sessionList.value[idx].title = (userMsgs[0].content || '').substring(0, 20)
+      const localMap = Object.fromEntries(sessionList.value.map(s => [s.id, s]))
+
+      // Redis 为主，保留本地标题
+      const merged = backendSessions.map(bs => ({
+        id: bs.session_id,
+        title: (localMap[bs.session_id]?.title && !localMap[bs.session_id]?.title.startsWith('新会话'))
+          ? localMap[bs.session_id].title : (bs.title || '新会话'),
+        time: localMap[bs.session_id]?.time || bs.created_at || new Date().toISOString(),
+        messageCount: bs.message_count || 0,
+      }))
+
+      // 保底：当前会话必须在列表中（Redis 可能已过期但 local 还在）
+      if (currentSessionId.value && !merged.find(s => s.id === currentSessionId.value)) {
+        const local = localMap[currentSessionId.value]
+        if (local) {
+          merged.unshift(local)
+        }
       }
-      saveSessionList()
+
+      sessionList.value = merged
+      saveSessionList(merged)
+    } catch (e) {
+      console.warn('会话同步失败，保留本地列表:', e.message)
     }
   }
 
-  // 创建新会话
+  // ==================== 会话操作 ====================
+
   let _sessionCounter = sessionList.value.length
+
   const createSession = () => {
     _sessionCounter++
     const id = makeSessionId()
-    const title = `新会话 ${_sessionCounter}`
-    sessionList.value.unshift({ id, title, time: new Date().toISOString(), messageCount: 0 })
-    saveSessionList()
+    const now = new Date().toISOString()
+    const session = { id, title: `新会话 ${_sessionCounter}`, time: now, messageCount: 0 }
+    sessionList.value.unshift(session)
+    saveSessionList(sessionList.value)
     switchSession(id)
   }
 
-  // 重命名会话
-  const renameSession = (sessionId, newTitle) => {
-    const idx = sessionList.value.findIndex(s => s.id === sessionId)
-    if (idx >= 0 && newTitle.trim()) {
-      sessionList.value[idx].title = newTitle.trim().substring(0, 30)
-      saveSessionList()
-    }
-  }
-
-  // 切换会话
   const switchSession = (sessionId) => {
-    // 保存当前会话消息
+    // 保存当前消息
     if (currentSessionId.value) {
-      localStorage.setItem('chat_msgs_' + currentSessionId.value, JSON.stringify(messages.value))
+      saveMessages(currentSessionId.value, messages.value)
     }
-    // 切换到新会话
+    // 切换
     currentSessionId.value = sessionId
-    localStorage.setItem('chat_current_session', sessionId)
-    // 加载新会话消息
-    const saved = localStorage.getItem('chat_msgs_' + sessionId)
-    messages.value = saved ? JSON.parse(saved) : []
+    setCurrentSessionId(sessionId)
+    messages.value = loadMessages(sessionId)
+    streamingMessageIndex.value = -1
     if (messages.value.length === 0) initWelcomeMessage()
   }
 
-  // 删除会话
   const deleteSession = (sessionId) => {
     sessionList.value = sessionList.value.filter(s => s.id !== sessionId)
-    saveSessionList()
+    saveSessionList(sessionList.value)
     localStorage.removeItem('chat_msgs_' + sessionId)
     if (currentSessionId.value === sessionId) {
       if (sessionList.value.length > 0) {
@@ -148,83 +144,125 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 添加用户消息
+  const renameSession = (sessionId, newTitle) => {
+    const idx = sessionList.value.findIndex(s => s.id === sessionId)
+    if (idx >= 0 && newTitle.trim()) {
+      sessionList.value[idx].title = newTitle.trim().substring(0, 30)
+      saveSessionList(sessionList.value)
+    }
+  }
+
+  // ==================== 消息操作 ====================
+
+  const getCurrentTime = () => formatDateTime(new Date())
+
+  const initWelcomeMessage = () => {
+    if (messages.value.length === 0) {
+      messages.value = [{
+        role: 'assistant',
+        content: '您好，我是您的智能助手 Smart Assistant，可以帮您做以下事情：\n'
+          + '1. 创建、查询、更新或删除备忘录（AI 自动分类）\n'
+          + '2. 从知识库中检索信息、上传和管理文档\n'
+          + '3. 简历与 JD 匹配评估（支持招聘方/求职者双视角）\n'
+          + '4. 整理信息并通过邮件发送\n'
+          + '5. 日期查询与计算\n'
+          + '\n请告诉我您需要什么帮助？',
+        time: getCurrentTime(),
+        intent: 'GENERAL',
+        references: [],
+        thinkingSteps: []
+      }]
+    }
+  }
+
   const addUserMessage = (content) => {
-    // 创建新数组以确保响应式更新
-    const newMessages = [...messages.value]
-    newMessages.push({
+    messages.value.push({
       role: 'user',
       content,
-      time: getCurrentTime(),
-      intent: null,
-      references: []
+      time: formatDateTime(new Date())
     })
-    messages.value = newMessages
+    updateSessionMeta()
     saveMessagesToStorage()
   }
 
-  // 添加AI消息
-  const addAiMessage = (content, intent = 'GENERAL', references = []) => {
-    // 创建新数组以确保响应式更新
-    const newMessages = [...messages.value]
-    newMessages.push({
+  const addAiMessage = (content, intent = 'GENERAL') => {
+    const index = messages.value.push({
       role: 'ai',
       content,
-      time: getCurrentTime(),
+      time: formatDateTime(new Date()),
       intent,
-      references
-    })
-    messages.value = newMessages
-    saveMessagesToStorage()
-  }
-
-  // 添加错误消息
-  const addErrorMessage = (errorMsg) => {
-    // 创建新数组以确保响应式更新
-    const newMessages = [...messages.value]
-    newMessages.push({
-      role: 'ai',
-      content: errorMsg || '抱歉，我暂时无法处理您的请求，请稍后再试。',
-      time: getCurrentTime(),
-      intent: 'GENERAL',
-      references: []
-    })
-    messages.value = newMessages
-    saveMessagesToStorage()
-  }
-
-  // 开始流式AI消息，返回消息索引
-  const startStreamAiMessage = () => {
-    const index = messages.value.length
-    // 创建新数组以确保响应式更新
-    const newMessages = [...messages.value]
-    newMessages.push({
-      role: 'ai',
-      content: '',
-      time: getCurrentTime(),
-      intent: 'GENERAL',
       references: [],
       thinkingSteps: []
     })
-    messages.value = newMessages
-    streamingMessageIndex.value = index
     saveMessagesToStorage()
-    return index
+    return index - 1
   }
 
-  // 添加思考步骤
+  const addErrorMessage = (errorMsg) => {
+    messages.value.push({
+      role: 'assistant',
+      content: errorMsg,
+      time: formatDateTime(new Date()),
+      intent: 'ERROR',
+      references: [],
+      thinkingSteps: []
+    })
+    saveMessagesToStorage()
+  }
+
+  const updateSessionMeta = () => {
+    const idx = sessionList.value.findIndex(s => s.id === currentSessionId.value)
+    if (idx >= 0) {
+      const userMsgs = messages.value.filter(m => m.role === 'user')
+      sessionList.value[idx].messageCount = messages.value.length
+      sessionList.value[idx].time = new Date().toISOString()
+      if (userMsgs.length === 1 && sessionList.value[idx].title === '新会话') {
+        sessionList.value[idx].title = (userMsgs[0].content || '').substring(0, 20)
+      }
+      saveSessionList(sessionList.value)
+    }
+  }
+
+  // ==================== 清空 ====================
+
+  const clearMessages = () => {
+    // 清除当前会话的消息和 localStorage
+    const sid = currentSessionId.value
+    localStorage.removeItem('chat_msgs_' + sid)
+    messages.value = []
+    // 从会话列表中移除
+    sessionList.value = sessionList.value.filter(s => s.id !== sid)
+    currentSessionId.value = ''
+    localStorage.removeItem('chat_current_session')
+    saveSessionList(sessionList.value)
+  }
+
+  // ==================== 流式内容操作 ====================
+
+  const startStreamAiMessage = () => {
+    const index = messages.value.push({
+      role: 'assistant',
+      content: '',
+      time: formatDateTime(new Date()),
+      intent: 'GENERAL',
+      references: [],
+      thinkingSteps: []
+    }) - 1
+    streamingMessageIndex.value = index
+    saveMessagesToStorage()
+  }
+
   const addThinkingStep = (tool, label) => {
     if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
       const newMessages = [...messages.value]
       const msg = newMessages[streamingMessageIndex.value]
       const steps = [...(msg.thinkingSteps || [])]
-      steps.push({ tool, label, status: 'running', time: getCurrentTime() })
+      steps.push({ tool, label, status: 'running', time: formatDateTime(new Date()) })
       newMessages[streamingMessageIndex.value] = { ...msg, thinkingSteps: steps }
       messages.value = newMessages
     }
   }
 
-  // 正文开始输出时，自动把所有运行的思考步骤标记为完成
   const _autoCompleteThinking = () => {
     if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
       const msg = messages.value[streamingMessageIndex.value]
@@ -240,7 +278,6 @@ export const useChatStore = defineStore('chat', () => {
     return false
   }
 
-  // 回退流式内容（去掉推理文字）
   const truncateStreamContent = (n) => {
     if (n <= 0) return
     if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
@@ -250,11 +287,10 @@ export const useChatStore = defineStore('chat', () => {
       if (content.length >= n) {
         newMessages[streamingMessageIndex.value] = { ...msg, content: content.slice(0, -n) }
         messages.value = newMessages
-    }
+      }
     }
   }
 
-  // 完成最后一个思考步骤
   const completeThinkingStep = () => {
     if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
       const newMessages = [...messages.value]
@@ -268,48 +304,28 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 追加流式内容到当前流式消息
   const appendStreamContent = (content) => {
-    // 首次收到正文时，标记所有运行中的思考步骤为完成
     _autoCompleteThinking()
 
-    // 检测 JSON 编码的文本（后端对多行内容使用 json.dumps 保护换行格式）
-    if (content.length > 0 && content[0] === '"') {
+    if (typeof content === 'string') {
       try {
         const decoded = JSON.parse(content)
-        if (typeof decoded === 'string') {
-          content = decoded
-        }
-      } catch (e) { /* 非 JSON 编码文本，保持原样 */ }
+        if (typeof decoded === 'string') content = decoded
+      } catch (e) { /* 非 JSON */ }
     }
 
-    console.log('🔵 appendStreamContent called:', {
-      contentLength: content.length,
-      contentPreview: content.length > 50 ? content.substring(0, 50) + '...' : content,
-      streamingMessageIndex: streamingMessageIndex.value,
-      messagesLength: messages.value.length,
-      currentContent: streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length
-        ? messages.value[streamingMessageIndex.value].content
-        : 'N/A'
-    })
-
-    // 检查是否为元数据事件（支持 __METADATA__ 前缀或纯 JSON）
+    // 元数据事件（JSON 包含 intent 字段）
     let metadata = null
     if (content.startsWith('__METADATA__')) {
-      try {
-        metadata = JSON.parse(content.substring('__METADATA__'.length))
-      } catch (e) { /* ignore */ }
-    } else if (content.startsWith('{') && content.includes('"intent"')) {
+      try { metadata = JSON.parse(content.substring('__METADATA__'.length)) } catch (e) { /* ignore */ }
+    } else if (typeof content === 'string' && content.startsWith('{') && content.includes('"intent"')) {
       try {
         const parsed = JSON.parse(content)
-        if (parsed.intent) {
-          metadata = parsed
-        }
+        if (parsed.intent) metadata = parsed
       } catch (e) { /* ignore */ }
     }
 
     if (metadata) {
-      console.log('📦 收到元数据:', metadata)
       if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
         const newMessages = [...messages.value]
         newMessages[streamingMessageIndex.value] = {
@@ -324,60 +340,28 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
-      // 创建新数组以确保响应式更新
       const newMessages = [...messages.value]
       const oldContent = newMessages[streamingMessageIndex.value].content
       newMessages[streamingMessageIndex.value] = {
         ...newMessages[streamingMessageIndex.value],
-        content: oldContent + content
+        content: oldContent + (typeof content === 'string' ? content : '')
       }
-      console.log('🟢 Updating message content:', {
-        oldContentLength: oldContent.length,
-        newContentLength: newMessages[streamingMessageIndex.value].content.length,
-        newContentPreview: newMessages[streamingMessageIndex.value].content.length > 100
-          ? newMessages[streamingMessageIndex.value].content.substring(0, 100) + '...'
-          : newMessages[streamingMessageIndex.value].content
-      })
       messages.value = newMessages
       saveMessagesToStorage()
-    } else {
-      console.warn('⚠️ Invalid streamingMessageIndex or messages array:', {
-        streamingMessageIndex: streamingMessageIndex.value,
-        messagesLength: messages.value.length
-      })
     }
   }
 
-  // 完成流式消息，设置意图和引用
   const completeStreamMessage = (intent = 'GENERAL', references = []) => {
     if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
-      // 创建新数组以确保响应式更新
       const newMessages = [...messages.value]
       const currentMessage = newMessages[streamingMessageIndex.value]
-
-      console.log('🔵 completeStreamMessage called:', {
-        streamingMessageIndex: streamingMessageIndex.value,
-        incomingIntent: intent,
-        incomingReferences: references,
-        currentMessageIntent: currentMessage.intent,
-        currentMessageReferences: currentMessage.references
-      })
-
-      // 如果消息已经有意图（通过元数据设置），或者传入的意图为空，则保留已有意图
       const finalIntent = (!intent || intent === '' || intent === 'GENERAL') && currentMessage.intent
-        ? currentMessage.intent
-        : (intent || 'GENERAL')
-      const finalReferences = currentMessage.references && currentMessage.references.length > 0 ? currentMessage.references : references
-
-      console.log('🟢 Final values:', {
-        finalIntent,
-        finalReferences
-      })
+        ? currentMessage.intent : (intent || 'GENERAL')
+      const finalReferences = currentMessage.references && currentMessage.references.length > 0
+        ? currentMessage.references : references
 
       newMessages[streamingMessageIndex.value] = {
-        ...currentMessage,
-        intent: finalIntent,
-        references: finalReferences
+        ...currentMessage, intent: finalIntent, references: finalReferences
       }
       messages.value = newMessages
       streamingMessageIndex.value = -1
@@ -385,22 +369,15 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 中止流式消息（出错时）
   const abortStreamMessage = () => {
     if (streamingMessageIndex.value >= 0 && streamingMessageIndex.value < messages.value.length) {
-      // 创建新数组以确保响应式更新
       const newMessages = [...messages.value]
-
-      // 如果内容为空，移除该消息
       if (newMessages[streamingMessageIndex.value].content === '') {
         newMessages.splice(streamingMessageIndex.value, 1)
         messages.value = newMessages
       } else {
-        // 否则保留已接收内容，但标记为一般意图
         newMessages[streamingMessageIndex.value] = {
-          ...newMessages[streamingMessageIndex.value],
-          intent: 'GENERAL',
-          references: []
+          ...newMessages[streamingMessageIndex.value], intent: 'GENERAL', references: []
         }
         messages.value = newMessages
       }
@@ -409,40 +386,15 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 清空所有会话数据（登出时调用）
-  const clearMessages = () => {
-    // 清除所有会话消息缓存
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('chat_msgs_')) localStorage.removeItem(key)
-    })
-    messages.value = []
-    sessionList.value = []
-    currentSessionId.value = ''
-    localStorage.removeItem('chat_sessions')
-    localStorage.removeItem('chat_current_session')
-  }
+  // ==================== computed ====================
 
-  // 设置加载状态
-  const setLoading = (isLoading) => {
-    loading.value = isLoading
-  }
-
-  // 设置输入消息
-  const setInputMessage = (msg) => {
-    inputMessage.value = msg
-  }
-
-  // 获取消息列表（只读）
   const messageList = computed(() => messages.value)
-
-  // 获取加载状态
   const isLoading = computed(() => loading.value)
-
-  // 获取输入消息
   const currentInputMessage = computed(() => inputMessage.value)
-
-  // 获取当前流式消息索引（调试用）
   const currentStreamingMessageIndex = computed(() => streamingMessageIndex.value)
+
+  const setLoading = (isLoading) => { loading.value = isLoading }
+  const setInputMessage = (msg) => { inputMessage.value = msg }
 
   return {
     messages: messageList,
@@ -451,25 +403,29 @@ export const useChatStore = defineStore('chat', () => {
     streamingMessageIndex: currentStreamingMessageIndex,
     currentSessionId,
     sessionList,
+    // 会话
+    syncSessionsFromBackend,
     createSession,
     switchSession,
     deleteSession,
     renameSession,
+    // 消息
+    getCurrentTime,
     initWelcomeMessage,
     addUserMessage,
     addAiMessage,
     addErrorMessage,
-    startStreamAiMessage,
-    appendStreamContent,
-    completeStreamMessage,
-    abortStreamMessage,
-    addThinkingStep,
-    completeThinkingStep,
-    truncateStreamContent,
     clearMessages,
     setLoading,
     setInputMessage,
-    getCurrentTime,
-    saveMessagesToStorage
+    updateSessionMeta,
+    // 流式
+    startStreamAiMessage,
+    addThinkingStep,
+    completeThinkingStep,
+    truncateStreamContent,
+    appendStreamContent,
+    completeStreamMessage,
+    abortStreamMessage,
   }
 })

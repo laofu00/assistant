@@ -179,7 +179,12 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "smart-assistant-jwt-secret-key-change-in-production"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 小时
 
-    # ==================== LangFuse（链路追踪） ====================
+    # ==================== 链路追踪（LangSmith / LangFuse 二选一） ====================
+    # LangSmith（本地开发）：LANGCHAIN_API_KEY + LANGCHAIN_PROJECT
+    # LangFuse（云部署）：LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY
+    # 优先级：LangFuse > LangSmith，两者都配时 LangFuse 生效
+    LANGCHAIN_API_KEY: str = ""
+    LANGCHAIN_PROJECT: str = "smart-assistant"
     LANGFUSE_HOST: str = ""
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""

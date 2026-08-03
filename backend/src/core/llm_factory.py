@@ -126,6 +126,19 @@ def _extract_usage(response: LLMResult) -> dict | None:
 # 模块级单例回调，所有 LLM 实例共享
 _token_callback = _TokenCallback()
 _langfuse_handler = None  # 懒加载，仅当环境变量配置时启用
+_langsmith_handler = None  # 懒加载，LangSmith 回调（本地开发用）
+
+
+def _is_langfuse_configured() -> bool:
+    """检查 LangFuse 是否已配置"""
+    import os
+    return bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))
+
+
+def _is_langsmith_configured() -> bool:
+    """检查 LangSmith 是否已配置"""
+    import os
+    return bool(os.environ.get("LANGCHAIN_API_KEY"))
 
 
 def _get_langfuse_handler():
@@ -134,11 +147,8 @@ def _get_langfuse_handler():
     if _langfuse_handler is not None and _langfuse_handler is not False:
         return _langfuse_handler
 
-    # 检查必填环境变量（未配置 → 返回 None，不影响正常使用）
-    import os
-
-    if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
-        _langfuse_handler = False  # 标记为已检查，避免重复尝试
+    if not _is_langfuse_configured():
+        _langfuse_handler = False
         return None
 
     try:
@@ -151,6 +161,55 @@ def _get_langfuse_handler():
         _langfuse_handler = False
 
     return _langfuse_handler if isinstance(_langfuse_handler, CallbackHandler) else None
+
+
+def _get_langsmith_handler():
+    """获取 LangSmith 回调处理器（本地开发用，LangFuse 优先）"""
+    global _langsmith_handler  # noqa: PLW0603
+    if _langsmith_handler is not None and _langsmith_handler is not False:
+        return _langsmith_handler
+
+    # LangFuse 优先：如果已配置 LangFuse，跳过 LangSmith
+    if _is_langfuse_configured():
+        _langsmith_handler = False
+        return None
+
+    if not _is_langsmith_configured():
+        _langsmith_handler = False
+        return None
+
+    try:
+        # 启用 LangChain 原生追踪 + 回调处理器
+        import os
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        os.environ.setdefault("LANGCHAIN_PROJECT", settings.LANGCHAIN_PROJECT)
+
+        from langsmith import traceable
+        logger.info(f"[LangSmith] 链路追踪已启用，项目: {settings.LANGCHAIN_PROJECT}")
+        # LangSmith 通过环境变量自动注入，不需要额外 callback
+        _langsmith_handler = True  # 标记已启用
+    except Exception as e:
+        logger.warning(f"[LangSmith] 初始化失败: {e}")
+        _langsmith_handler = False
+
+    return _langsmith_handler if _langsmith_handler is True else None
+
+
+def setup_tracing():
+    """初始化链路追踪（应用启动时调用一次）"""
+    import os
+    # LangFuse 优先：将 config 中的值注入环境变量
+    if settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY:
+        os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.LANGFUSE_PUBLIC_KEY)
+        os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.LANGFUSE_SECRET_KEY)
+        if settings.LANGFUSE_HOST:
+            os.environ.setdefault("LANGFUSE_HOST", settings.LANGFUSE_HOST)
+        _get_langfuse_handler()
+    elif settings.LANGCHAIN_API_KEY:
+        os.environ.setdefault("LANGCHAIN_API_KEY", settings.LANGCHAIN_API_KEY)
+        _get_langsmith_handler()
+    else:
+        logger.debug("[Tracing] 未配置链路追踪（LangFuse 或 LangSmith）")
 
 
 def get_llm(

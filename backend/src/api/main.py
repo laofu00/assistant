@@ -27,6 +27,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"Smart Assistant v{settings.APP_VERSION} 启动中...")
     logger.info(f"环境: {settings.ENVIRONMENT}, 模型: {settings.MODEL_NAME}")
 
+    # 链路追踪（LangFuse > LangSmith 自动选择）
+    try:
+        from src.core.llm_factory import setup_tracing
+        setup_tracing()
+    except Exception as e:
+        logger.warning(f"链路追踪初始化失败（不影响服务）: {e}")
+
     # 确保数据目录存在
     for d in [settings.chroma_path, str(settings.upload_dir), "data/dead_letter", "logs"]:
         Path(d).mkdir(parents=True, exist_ok=True)
@@ -106,8 +113,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # GZip 压缩
-    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    # GZip 压缩（已禁用，与 SSE 流式冲突 → 浏览器缓冲导致一次性显示）
+    # app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     # API 全局限流中间件（最先执行，认证之前）
     from src.core.rate_limit import ApiRateLimitMiddleware

@@ -147,7 +147,7 @@ class LongTermMemory:
 
             collection_name = f"{_LTM_COLLECTION_PREFIX}_{user_id}"
             try:
-                collection = vector_store._client.get_collection(collection_name)
+                collection = vector_store._client.get_collection(collection_name, embedding_function=vector_store._ef)
             except Exception:
                 return []
 
@@ -182,7 +182,7 @@ class LongTermMemory:
 
         collection_name = f"{_LTM_COLLECTION_PREFIX}_{user_id}"
         try:
-            collection = vector_store._client.get_collection(collection_name)
+            collection = vector_store._client.get_collection(collection_name, embedding_function=vector_store._ef)
         except Exception:
             return {"profile": {}, "facts": [], "fact_count": 0}
 
@@ -220,7 +220,7 @@ class LongTermMemory:
                 continue
             user_id = col_name[len(f"{_LTM_COLLECTION_PREFIX}_"):]
             try:
-                collection = vector_store._client.get_collection(col_name)
+                collection = vector_store._client.get_collection(col_name, embedding_function=vector_store._ef)
                 results = collection.get(include=["documents", "metadatas"])
                 for doc, meta in zip(results.get("documents", []), results.get("metadatas", []), strict=False):
                     all_facts.append({
@@ -249,7 +249,7 @@ class LongTermMemory:
 
         collection_name = f"{_LTM_COLLECTION_PREFIX}_{user_id}"
         try:
-            collection = vector_store._client.get_collection(collection_name)
+            collection = vector_store._client.get_collection(collection_name, embedding_function=vector_store._ef)
             results = collection.get(where={"user_id": user_id}, include=["documents"])
             ids_to_delete = []
             for doc_id, doc in zip(results.get("ids", []), results.get("documents", []), strict=False):
