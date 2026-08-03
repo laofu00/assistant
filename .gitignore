@@ -46,9 +46,6 @@ frontend/.env.test
 frontend/test.html
 frontend/运行指南.txt
 
-# Docker env
-.env.docker
-
 # 系统
 .DS_Store
 Thumbs.db

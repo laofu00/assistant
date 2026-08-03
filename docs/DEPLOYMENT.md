@@ -133,7 +133,7 @@ npm run dev
 
 ```bash
 # 从模板创建
-cp .env.docker .env
+cp .env.docker.example .env
 
 # 编辑 .env，修改以下必填项：
 # - OPENAI_API_KEY：你的 API Key
@@ -236,7 +236,7 @@ cd /opt/smart-assistant
 ### 3. 配置环境变量
 
 ```bash
-cp .env.docker .env
+cp .env.docker.example .env
 vi .env
 ```
 
