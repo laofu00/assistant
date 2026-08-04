@@ -215,6 +215,22 @@ services:
     profiles:
       - init
 
+  # ==================== LangFuse 数据库初始化（一次性） ====================
+  langfuse-init:
+    image: postgres:16-alpine
+    container_name: smart-langfuse-init
+    command: >
+      sh -c "psql -h postgres -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname='langfuse'\" | grep -q 1 || psql -h postgres -U postgres -c 'CREATE DATABASE langfuse;'"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - smart-net
+    profiles:
+      - init
+
   # ==================== 种子数据（一次性） ====================
   seed:
     build:
