@@ -48,7 +48,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379/0
       - REDIS_PASSWORD=${REDIS_PASSWORD:-smart123}
-      - CHROMA_URL=${CHROMA_URL:-}
+      - CHROMA_URL=${CHROMA_URL:-http://chromadb:8000}
       - CHROMA_PERSIST_DIR=data/chroma_db
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - DEBUG=${DEBUG:-false}
@@ -149,7 +149,7 @@ services:
     ports:
       - "${CHROMA_PORT:-8001}:8000"
     volumes:
-      - chroma_data:/chroma/chroma
+      - chroma_data:/data
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
@@ -159,7 +159,7 @@ services:
     networks:
       - smart-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8000/api/v1/heartbeat')"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -170,7 +170,7 @@ services:
 
   # ==================== 可观测性（LangFuse 链路追踪） ====================
   langfuse:
-    image: ghcr.io/langfuse/langfuse:3
+    image: ghcr.io/langfuse/langfuse:2
     container_name: smart-langfuse
     ports:
       - "${LANGFUSE_PORT:-3000}:3000"
