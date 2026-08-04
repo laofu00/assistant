@@ -144,12 +144,12 @@ services:
 
   # ==================== 向量数据库（ChromaDB） ====================
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.6.3
     container_name: smart-chromadb
     ports:
       - "${CHROMA_PORT:-8001}:8000"
     volumes:
-      - chroma_data:/data
+      - chroma_data:/chroma/chroma
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
@@ -159,7 +159,7 @@ services:
     networks:
       - smart-net
     healthcheck:
-      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8000/api/v1/heartbeat')"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
       interval: 15s
       timeout: 5s
       retries: 5
