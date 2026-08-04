@@ -4,6 +4,7 @@
 
 # AI 框架
 langchain>=0.3.0
+langchain-community>=0.3.0
 langchain-openai>=0.3.0
 langgraph>=0.4.0
 
@@ -16,6 +17,10 @@ redis>=5.0.0
 
 # 安全
 PyJWT>=2.0.0
+bcrypt>=4.0.0
+
+# 检索
+jieba>=0.42.0
 
 # Web 框架
 fastapi>=0.115.0
