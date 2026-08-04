@@ -21,6 +21,15 @@ bcrypt>=4.0.0
 
 # 检索
 jieba>=0.42.0
+rank-bm25>=0.2.0
+
+# API 客户端
+dashscope>=1.17.0
+aiohttp>=3.9.0
+
+# 链路追踪（可选，运行时按需加载）
+langfuse>=2.0.0
+langsmith>=0.1.0
 
 # Web 框架
 fastapi>=0.115.0
