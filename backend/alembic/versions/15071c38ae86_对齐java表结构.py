@@ -50,6 +50,13 @@ def upgrade() -> None:
     )
     op.create_index('ix_user_info_user_id', 'user_info', ['user_id'], unique=True)
 
+    # 插入默认超级管理员
+    op.execute(
+        "INSERT INTO user_info (id, user_id, username, password, nickname, avatar, phone, email, gender, status, roles, permissions, created_at, updated_at, deleted) "
+        "VALUES (1, 'admin', 'admin', '$2b$12$XogQRUzO5C.hg07KXoJ9cekHLRJrLTJIsYbdS0j3X48v15mB17edG', "
+        "'管理员', '', NULL, NULL, 1, 1, 'admin', '', NOW(), NOW(), 0)"
+    )
+
     # ==================== 3. 新建 user_preference ====================
     op.create_table('user_preference',
         sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
