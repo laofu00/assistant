@@ -5,6 +5,7 @@ WORKDIR /app
 # 系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Python 依赖（分层缓存：requirements.txt 变才重建）
