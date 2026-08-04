@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt && pip install uvicorn
 # 复制源码
 COPY src/ src/
 COPY alembic/ alembic/
+COPY alembic.ini ./
 COPY scripts/ scripts/
 COPY data/ data/
 
