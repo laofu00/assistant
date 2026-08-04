@@ -204,7 +204,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: smart-alembic
-    command: alembic upgrade head
+    command: alembic -c alembic/alembic.ini upgrade head
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}
     depends_on:
