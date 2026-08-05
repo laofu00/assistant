@@ -44,7 +44,7 @@ async def get_records(
             "costAmount": float(r.cost_amount),
             "intentType": r.intent_type,
             "toolCalled": r.tool_called,
-            "createTime": str(r.created_at) if r.created_at else None,
+            "createTime": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else None,
         }
         for r in result["records"]
     ]

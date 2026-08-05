@@ -2,7 +2,7 @@
 
 import hashlib
 import uuid
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
@@ -22,8 +22,6 @@ from src.models.knowledge_file import KnowledgeFile
 
 router = APIRouter(prefix="/knowledge", tags=["知识库"])
 
-_CST = timezone(timedelta(hours=8))
-
 
 def _get_user_id(request: Request) -> str:
     """从请求上下文获取已认证的用户ID（中间件已保证非 anonymous）"""
@@ -31,11 +29,10 @@ def _get_user_id(request: Request) -> str:
 
 
 def _fmt_time(dt: datetime | None) -> str | None:
+    """格式化时间字符串（PostgreSQL 已设为 Asia/Shanghai，naive datetime 直接格式化）"""
     if dt is None:
         return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(_CST).strftime("%Y-%m-%d %H:%M:%S")
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 @router.post("/upload")
