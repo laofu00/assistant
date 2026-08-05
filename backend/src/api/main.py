@@ -66,6 +66,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"工具配置加载失败（不影响服务）: {e}")
 
+    # 预热 ChromaDB 连接（避免首请求冷连接被 reset）
+    try:
+        from src.knowledge.vector_store import vector_store
+        if settings.CHROMA_URL:
+            loop = asyncio.get_running_loop()
+            heartbeat = await loop.run_in_executor(None, vector_store.heartbeat)
+            logger.info(f"ChromaDB 连接预热成功 (heartbeat={heartbeat}ms)")
+    except Exception as e:
+        logger.warning(f"ChromaDB 连接预热失败（不影响服务）: {e}")
+
     yield
 
     # 关闭

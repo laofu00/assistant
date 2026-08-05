@@ -1,11 +1,15 @@
 """ChromaDB 向量存储封装 — CRUD + 按用户隔离，使用 API 向量化"""
 
 import asyncio
+import time
+from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import TypeVar
 
 import chromadb
 from chromadb.api import ClientAPI
 from loguru import logger
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from src.core.config import settings
 from src.knowledge.embedding_tracker import TrackedEmbeddingFunction
@@ -15,6 +19,16 @@ _EMBED_BATCH_SIZE = 20
 # 指数退避配置
 _MAX_RETRIES = 3
 _BASE_DELAY = 2.0  # 秒
+
+# 可重试的连接异常类型（ChromaDB HttpClient 底层用 requests，冷启动首请求常被 reset）
+_RETRYABLE_ERRORS = (
+    RequestsConnectionError,
+    ConnectionError,
+    ConnectionResetError,
+    TimeoutError,
+)
+
+_T = TypeVar("_T")
 
 
 class VectorStore:
@@ -94,7 +108,10 @@ class VectorStore:
     def deactivate_by_filename(self, user_id: str, filename: str) -> int:
         """将指定文件的所有 chunk 标记为 inactive（不重新嵌入）"""
         collection = self._get_collection(user_id)
-        results = collection.get(where={"source": filename}, include=["metadatas"])
+        results = self._retry(
+            lambda: collection.get(where={"source": filename}, include=["metadatas"]),
+            "deactivate_by_filename.get",
+        )
         ids = results.get("ids", [])
         if not ids:
             return 0
@@ -110,7 +127,10 @@ class VectorStore:
     def deactivate_by_file_id(self, user_id: str, file_id: str) -> int:
         """按 file_id 将 chunk 标记为 inactive"""
         collection = self._get_collection(user_id)
-        results = collection.get(where={"file_id": file_id}, include=["metadatas"])
+        results = self._retry(
+            lambda: collection.get(where={"file_id": file_id}, include=["metadatas"]),
+            "deactivate_by_file_id.get",
+        )
         ids = results.get("ids", [])
         if not ids:
             return 0
@@ -125,7 +145,10 @@ class VectorStore:
     def get_all_docs(self, user_id: str) -> list[dict]:
         """获取用户全部活跃文档（不触发嵌入）"""
         collection = self._get_collection(user_id)
-        results = collection.get(where={"active": 1}, include=["documents", "metadatas"])
+        results = self._retry(
+            lambda: collection.get(where={"active": 1}, include=["documents", "metadatas"]),
+            "get_all_docs",
+        )
         if not results["documents"]:
             return []
         return [
@@ -142,10 +165,13 @@ class VectorStore:
     ) -> list[dict]:
         """向量相似度检索"""
         collection = self._get_collection(user_id)
-        results = collection.query(
-            query_texts=[query],
-            n_results=top_k,
-            where=self._with_active(where),
+        results = self._retry(
+            lambda: collection.query(
+                query_texts=[query],
+                n_results=top_k,
+                where=self._with_active(where),
+            ),
+            "search",
         )
         if not results["documents"] or not results["documents"][0]:
             return []
@@ -166,9 +192,12 @@ class VectorStore:
     def get_by_filename(self, user_id: str, filename: str) -> list[dict]:
         """按文件名获取活跃 chunk（按 chunk_index 排序）"""
         collection = self._get_collection(user_id)
-        results = collection.get(
-            where={"$and": [{"source": filename}, {"active": 1}]},
-            include=["documents", "metadatas"],
+        results = self._retry(
+            lambda: collection.get(
+                where={"$and": [{"source": filename}, {"active": 1}]},
+                include=["documents", "metadatas"],
+            ),
+            "get_by_filename",
         )
         if not results["documents"]:
             return []
@@ -186,7 +215,10 @@ class VectorStore:
     def list_filenames(self, user_id: str) -> list[str]:
         """列出用户所有活跃文件"""
         collection = self._get_collection(user_id)
-        results = collection.get(where={"active": 1}, include=["metadatas"])
+        results = self._retry(
+            lambda: collection.get(where={"active": 1}, include=["metadatas"]),
+            "list_filenames",
+        )
         if not results["metadatas"]:
             return []
 
@@ -205,10 +237,32 @@ class VectorStore:
         """按文件 ID 删除所有 chunk，返回删除数量"""
         return self._delete_by_metadata(user_id, {"file_id": str(file_id)})
 
+    @staticmethod
+    def _retry(op: Callable[[], _T], op_name: str) -> _T:
+        """ChromaDB 操作指数退避重试（解决 HttpClient 冷连接被 reset 的问题）
+
+        ChromaDB 底层使用 requests 同步库，直接从 sync 方法中调用。
+        """
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                return op()
+            except _RETRYABLE_ERRORS as e:
+                if attempt == _MAX_RETRIES:
+                    logger.error(f"ChromaDB {op_name} 失败（已重试 {_MAX_RETRIES} 次）: {e}")
+                    raise
+                delay = _BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    f"ChromaDB {op_name} 连接异常 (尝试 {attempt}/{_MAX_RETRIES})，{delay:.0f}s 后重试: {e}"
+                )
+                time.sleep(delay)
+
     def _delete_by_metadata(self, user_id: str, where: dict) -> int:
         """按 metadata 条件删除 chunk"""
         collection = self._get_collection(user_id)
-        results = collection.get(where=where, include=["metadatas"])
+        results = self._retry(
+            lambda: collection.get(where=where, include=["metadatas"]),
+            "_delete_by_metadata.get",
+        )
         ids = results.get("ids", [])
         if ids:
             collection.delete(ids=ids)
@@ -217,7 +271,10 @@ class VectorStore:
     def count(self, user_id: str) -> int:
         """获取用户活跃文档总数"""
         collection = self._get_collection(user_id)
-        results = collection.get(where={"active": 1}, include=[])
+        results = self._retry(
+            lambda: collection.get(where={"active": 1}, include=[]),
+            "count",
+        )
         return len(results.get("ids", []))
 
     def heartbeat(self) -> int:

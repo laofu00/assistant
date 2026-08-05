@@ -200,16 +200,20 @@ def setup_tracing():
     import os
     # LangFuse 优先：将 config 中的值注入环境变量
     if settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY:
-        os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.LANGFUSE_PUBLIC_KEY)
-        os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.LANGFUSE_SECRET_KEY)
+        os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
+        os.environ["LANGFUSE_SECRET_KEY"] = settings.LANGFUSE_SECRET_KEY
         if settings.LANGFUSE_HOST:
             os.environ.setdefault("LANGFUSE_HOST", settings.LANGFUSE_HOST)
+        # 确保 langsmith 不会也被激活
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
         _get_langfuse_handler()
     elif settings.LANGCHAIN_API_KEY:
         os.environ.setdefault("LANGCHAIN_API_KEY", settings.LANGCHAIN_API_KEY)
         _get_langsmith_handler()
     else:
-        logger.debug("[Tracing] 未配置链路追踪（LangFuse 或 LangSmith）")
+        # 显式禁用所有追踪，防止环境变量残留导致 langsmith 自动激活
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
+        logger.debug("[Tracing] 未配置链路追踪，已显式禁用 LangSmith")
 
 
 def get_llm(
