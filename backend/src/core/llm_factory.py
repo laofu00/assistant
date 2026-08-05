@@ -15,6 +15,9 @@ from loguru import logger
 
 from src.core.config import settings
 
+# langfuse v2 SDK 兼容桥接：必须在 import langfuse 之前加载，注册 langchain.callbacks 虚拟模块
+import src.core.langfuse_compat  # noqa: F401
+
 # ==================== 请求级追踪上下文 ====================
 
 # ContextVar 默认值用 None，运行时通过 set() 赋值
@@ -152,7 +155,7 @@ def _get_langfuse_handler():
         return None
 
     try:
-        from langfuse.langchain import CallbackHandler
+        from langfuse.callback import CallbackHandler
 
         _langfuse_handler = CallbackHandler()
         logger.info("[LangFuse] 链路追踪已启用")

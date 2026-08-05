@@ -170,7 +170,7 @@ services:
 
   # ==================== 可观测性（LangFuse 链路追踪） ====================
   langfuse:
-    image: ghcr.io/langfuse/langfuse:3
+    image: ghcr.io/langfuse/langfuse:2
     container_name: smart-langfuse
     ports:
       - "${LANGFUSE_PORT:-3000}:3000"
