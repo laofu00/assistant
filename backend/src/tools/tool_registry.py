@@ -27,6 +27,7 @@ class ToolMeta:
     permission: ToolPermission        # 所需权限级别
     parameter_count: int              # 参数数量
     category: str                     # knowledge/memo/email/date/user
+    cacheable: bool = False            # 是否允许缓存（默认否，避免数据陈旧）
     enabled: bool = True
     version: int = 1                  # 工具版本号（灰度切流用）
     input_max_lengths: dict[str, int] = field(default_factory=dict)  # 参数名 → 最大长度

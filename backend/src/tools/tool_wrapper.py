@@ -187,7 +187,7 @@ class ToolExecutor:
                 from src.tools.health import check_tool_health
 
                 healthy = await check_tool_health(tool_name)
-                if not healthy:
+                if not healthy and meta and meta.cacheable:
                     # 尝试降级缓存
                     cache_key = tool_cache.make_key(tool_name, user_id, *args.values())
                     fallback = tool_cache.get_fallback(cache_key)
@@ -256,7 +256,7 @@ class ToolExecutor:
 
             # ====== 步骤 8: 缓存检查 ======
             cache_key = None
-            if meta and meta.permission == ToolPermission.READ_ONLY:
+            if meta and meta.cacheable and meta.permission == ToolPermission.READ_ONLY:
                 cache_key = tool_cache.make_key(tool_name, user_id, *args.values())
                 cached = tool_cache.get(cache_key)
                 if cached is not None:
