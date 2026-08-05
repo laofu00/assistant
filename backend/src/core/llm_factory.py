@@ -152,16 +152,7 @@ def _get_langfuse_handler():
         return None
 
     try:
-        # langfuse v2 callback 依赖 langchain.callbacks.base，langchain>=1.0 已移至 langchain_core
-        import sys
-        import langchain_core.callbacks.base
-        if "langchain.callbacks" not in sys.modules:
-            _m = type(sys)("langchain.callbacks")
-            _m.__path__ = []
-            sys.modules["langchain.callbacks"] = _m
-            sys.modules["langchain.callbacks.base"] = langchain_core.callbacks.base
-
-        from langfuse.callback import CallbackHandler
+        from langfuse.langchain import CallbackHandler
 
         _langfuse_handler = CallbackHandler()
         logger.info("[LangFuse] 链路追踪已启用")

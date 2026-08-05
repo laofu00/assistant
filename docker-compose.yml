@@ -168,14 +168,38 @@ services:
         limits:
           memory: ${CHROMA_MEMORY_LIMIT:-512M}
 
-  # ==================== 可观测性（LangFuse 链路追踪） ====================
+  # ==================== ClickHouse（LangFuse v3 事件存储） ====================
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: smart-clickhouse
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    restart: unless-stopped
+    networks:
+      - smart-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${CLICKHOUSE_MEMORY_LIMIT:-512M}
+
+  # ==================== 可观测性（LangFuse v3 链路追踪） ====================
   langfuse:
-    image: ghcr.io/langfuse/langfuse:2
+    image: ghcr.io/langfuse/langfuse:3
     container_name: smart-langfuse
     ports:
       - "${LANGFUSE_PORT:-3000}:3000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/langfuse
+      CLICKHOUSE_URL: http://langfuse:langfuse@clickhouse:8123/langfuse
       NEXTAUTH_URL: ${LANGFUSE_URL:-http://localhost:3000}
       NEXTAUTH_SECRET: ${LANGFUSE_SECRET:-change-me-in-production-at-least-32-chars}
       SALT: ${LANGFUSE_SALT:-change-me-in-production}
@@ -184,6 +208,8 @@ services:
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
     depends_on:
       postgres:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
     restart: unless-stopped
     networks:
@@ -255,6 +281,7 @@ volumes:
   dead_letter_data:
   postgres_data:
   redis_data:
+  clickhouse_data:
 
 networks:
   smart-net:
