@@ -156,11 +156,11 @@ def _get_langfuse_handler():
 
         _langfuse_handler = CallbackHandler()
         logger.info("[LangFuse] 链路追踪已启用")
+        return _langfuse_handler
     except Exception as e:
         logger.warning(f"[LangFuse] 初始化失败，追踪功能不可用: {e}")
         _langfuse_handler = False
-
-    return _langfuse_handler if isinstance(_langfuse_handler, CallbackHandler) else None
+        return None
 
 
 def _get_langsmith_handler():
