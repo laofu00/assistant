@@ -32,6 +32,8 @@ _EXTRACTION_PROMPT = """你是一个用户信息提取助手。从对话历史�
 - decision: 重要决策结果、确认的约定
 - reminder: 需要提醒的事项
 
+注意：不要提取"知识库中有N个文档"这类随时会变的数字，也不要重复提取已存在的事实。
+
 只输出 JSON，不要加任何前缀。如果没有可提取的信息，输出 {"preferences": {}, "key_facts": []}。
 
 对话历史：
@@ -111,17 +113,33 @@ class LongTermMemory:
     # ==================== ChromaDB 存储 ====================
 
     async def _save_to_chromadb(self, user_id: str, session_id: str, facts: list[dict]) -> None:
-        """写入 ChromaDB（按 user_id 分 collection）"""
+        """写入 ChromaDB（按 user_id 分 collection，按 fact 文本去重）"""
         from src.knowledge.vector_store import vector_store
 
         collection_name = f"{_LTM_COLLECTION_PREFIX}_{user_id}"
+
+        collection = vector_store._client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=vector_store._ef,
+        )
+
+        # 查询已有事实，按文本去重
+        try:
+            existing = collection.get(include=["documents"])
+            existing_texts = set(existing.get("documents", []))
+        except Exception:
+            existing_texts = set()
+
         now = time.strftime("%Y-%m-%d %H:%M:%S")
+        new_facts = [f for f in facts if f.get("fact", "") not in existing_texts]
+        if not new_facts:
+            return
 
         texts = []
         metadatas = []
         ids = []
 
-        for i, fact in enumerate(facts):
+        for i, fact in enumerate(new_facts):
             texts.append(fact.get("fact", ""))
             metadatas.append({
                 "user_id": user_id,
@@ -132,10 +150,6 @@ class LongTermMemory:
             })
             ids.append(f"{user_id}_{session_id}_{i}_{int(time.time())}")
 
-        collection = vector_store._client.get_or_create_collection(
-            name=collection_name,
-            embedding_function=vector_store._ef,
-        )
         collection.add(documents=texts, metadatas=metadatas, ids=ids)
 
     # ==================== 检索 ====================
@@ -250,13 +264,14 @@ class LongTermMemory:
         collection_name = f"{_LTM_COLLECTION_PREFIX}_{user_id}"
         try:
             collection = vector_store._client.get_collection(collection_name, embedding_function=vector_store._ef)
-            results = collection.get(where={"user_id": user_id}, include=["documents"])
+            results = collection.get(include=["documents"])
             ids_to_delete = []
             for doc_id, doc in zip(results.get("ids", []), results.get("documents", []), strict=False):
                 if doc == fact_text:
                     ids_to_delete.append(doc_id)
             if ids_to_delete:
                 collection.delete(ids=ids_to_delete)
+                logger.debug(f"[长期记忆] 已删除 {len(ids_to_delete)} 条: {fact_text[:50]}")
             return True
         except Exception as e:
             logger.warning(f"[长期记忆] 删除失败: {e}")
