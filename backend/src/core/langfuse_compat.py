@@ -6,11 +6,10 @@ langfuse v2 的 callback 模块 import langchain.callbacks.base.BaseCallbackHand
 
 import sys
 
-import langchain_core.callbacks
+import langchain_core.callbacks.base
 
 if "langchain.callbacks" not in sys.modules:
     _m = type(sys)("langchain.callbacks")
-    _m.base = langchain_core.callbacks
     _m.__path__ = []
     sys.modules["langchain.callbacks"] = _m
-    sys.modules["langchain.callbacks.base"] = langchain_core.callbacks
+    sys.modules["langchain.callbacks.base"] = langchain_core.callbacks.base
